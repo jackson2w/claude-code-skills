@@ -1,6 +1,6 @@
 ---
 name: proxmox-node-systemd-service
-description: This skill should be used when deploying a Node.js application (Next.js, or any pnpm/npm-based app) as a native systemd service inside an unprivileged Proxmox LXC, instead of Docker — installing Node via NodeSource, running a dedicated non-root service user, building with pnpm, and exposing it only over Tailscale Serve. Also covers debugging an Ansible playbook for this pattern that never reports `changed=0` on a repeat run, a "detected dubious ownership in repository" git error, or a service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale. Trigger phrases include "run Node app as systemd service", "NodeSource install Ansible", "pnpm build systemd", "next start binds 0.0.0.0", "HOSTNAME env var not working Next.js", "ansible git dubious ownership", "git module changed every run", "recursive chown always changed ansible", "Docker-in-LXC alternative for Node app".
+description: This skill should be used when deploying a Node.js application (Next.js, n8n, or any pnpm/npm-based app) as a native systemd service inside an unprivileged Proxmox LXC, instead of Docker — installing Node via NodeSource, running a dedicated non-root service user, building with pnpm, and exposing it only over Tailscale Serve. Also covers debugging an Ansible playbook for this pattern that never reports `changed=0` on a repeat run, a "detected dubious ownership in repository" git error, a service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale, or an app that fails to write scratch/upload files under `/tmp` despite the service showing active. Trigger phrases include "run Node app as systemd service", "NodeSource install Ansible", "pnpm build systemd", "next start binds 0.0.0.0", "HOSTNAME env var not working Next.js", "ansible git dubious ownership", "git module changed every run", "recursive chown always changed ansible", "Docker-in-LXC alternative for Node app", "ProtectSystem strict /tmp ENOENT", "PrivateTmp systemd Node app".
 ---
 
 # Native Node.js app as a systemd service in a Proxmox LXC
@@ -179,6 +179,30 @@ If the intended access path is Tailscale Serve only (this homelab's standard pat
 to `0.0.0.0` silently exposes the app on the plain LAN too — see the verification step below,
 which is the only reliable way to catch this class of bug.
 
+## Gotcha 5 — `ProtectSystem=strict` blocks `/tmp` writes; add `PrivateTmp=true` if the app writes scratch files there
+
+`ProtectSystem=strict` (Gotcha 4's unit template, below) makes the *entire* filesystem read-only
+except `ReadWritePaths=` — including the real `/tmp`, which is easy to overlook since `/tmp` is
+normally writable by everyone. Any app that writes scratch/upload files to `/tmp` at startup or
+per-request (seen concretely with n8n 2.x's Data Table feature, which does `mkdir
+/tmp/<app>Uploads` unconditionally on boot) throws an `ENOENT` on that `mkdir` — easy to miss in
+logs since the service still reports `active (running)`, it just fails the first real write.
+
+**Fix: add `PrivateTmp=true` alongside `ProtectSystem=strict`.** This gives the service its own
+isolated, writable `/tmp` namespace rather than needing to open up the real one (which would also
+leak scratch files to every other service on the host):
+
+```ini
+[Service]
+...
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/opt/{{ app_user }}/app
+```
+
+Don't reach for adding `/tmp` to `ReadWritePaths=` instead — that shares the real `/tmp` across
+every service on the host, which `PrivateTmp` is specifically designed to avoid.
+
 ## systemd unit template
 
 ```ini
@@ -197,6 +221,7 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
+PrivateTmp=true
 ReadWritePaths=/opt/{{ app_user }}/app
 
 [Install]
