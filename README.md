@@ -23,6 +23,26 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
   schedule via `pvesh`, and the `Datastore.Prune` permission gotcha that fails silently per-job.
 - **home-assistant** — configuring/troubleshooting a Home Assistant OS (HAOS) instance: add-ons
   (now "Apps"), `configuration.yaml`, Tailscale remote access, Supervisor, backups.
+- **paperless-ngx-bare-metal** — installing Paperless-ngx from its release tarball instead of
+  Docker Compose: the tarball's real directory layout, the `mysqlclient` build dependency needed
+  even for SQLite, Granian (not Gunicorn) as the ASGI server, and verifying OCR actually ran
+  rather than just "upload succeeded."
+- **jellyfin-media-permissions** — diagnosing "fatal player error" / empty-metadata library
+  items caused by a macOS `rsync` pipeline leaving files unreadable by Jellyfin's service
+  account (openrsync has no `--chown`/`--no-owner` flags).
+- **pihole-local-dns-records** — getting Pi-hole's dashboard/Query Log to show device names
+  instead of raw IPs, identifying unlabeled devices via mDNS/DHCP without router access, and
+  why the dashboard label can lag a correct `dns.hosts` record.
+- **proxmox-no-subscription-nag** — suppressing the "No valid subscription" login popup on a
+  free/no-subscription PVE or PBS install.
+- **proxmox-vzdump-notifications** — customizing Proxmox's Handlebars backup-notification
+  templates and testing them without waiting for (or triggering) a real backup job.
+- **tailscale-pihole-dns-routing** — the interaction between Tailscale's tailnet-wide DNS
+  override, MagicDNS, and Pi-hole — why a host can silently bypass Pi-hole even though DNS
+  still resolves, and the systemd-resolved split-DNS fix.
+- **n8n-workflow-api-authoring** — authoring n8n workflow JSON for import via its REST API
+  instead of the editor UI: credential/expression/Code-node gotchas that don't show up until
+  a workflow actually runs.
 
 ## Cloudflare
 
@@ -51,6 +71,10 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
 - **workers-best-practices** — production best practices for Worker code and `wrangler.jsonc`.
 - **wrangler** — the Workers CLI: KV, R2, D1, Vectorize, Hyperdrive, Queues, Workflows, Secrets
   Store.
+- **cloudflare-worker-tailscale-shield** — putting a Worker in front of a Tailscale-Funnel-exposed
+  homelab service (edge auth/rate-limit + Queue retry-on-failure): why Workers can't reach
+  tailnet-private addresses, forwarding the origin's own auth header through, and a `wrangler
+  secret put` misuse that leaks a secret's value as its *name*.
 
 ## Web / design / verification
 

@@ -1,7 +1,7 @@
 ---
 name: proxmox-ansible-provisioning
-description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, or Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC".
-version: 0.1.0
+description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC, or any host device (GPU render node, USB dongle) bind-mounted into an unprivileged LXC showing up owned by `nobody:nogroup`. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC", "device passthrough nobody nogroup", "renderD128 permission denied LXC", "GPU passthrough unprivileged LXC", "chmod 666 dev dri".
+version: 0.2.0
 ---
 
 # Proxmox + Ansible Provisioning
@@ -179,6 +179,46 @@ pct stop <vmid> && pct start <vmid>   # full stop/start required -- a restart fr
 
 Verify before moving on: `pct exec <vmid> -- ls -la /dev/net/tun` should show the device, and
 `systemctl is-active tailscaled` should report `active`, not `activating`.
+
+## Gotcha 8 — a bind-mounted device keeps the host's uid/gid, which shows as `nobody:nogroup` and blocks access inside an unprivileged LXC
+
+Gotcha 7 above is TUN-specific, but the same `.conf` pattern applies to *any* host device passed
+into an unprivileged LXC (a GPU render node for hardware transcoding, a USB dongle, etc.):
+
+```
+lxc.cgroup2.devices.allow: c <major>:<minor> rwm
+lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
+```
+
+TUN usually doesn't hit a follow-on permission problem because `/dev/net/tun` is already
+world-writable on most hosts. Other devices commonly aren't — `/dev/dri/renderD128` is typically
+`crw-rw---- root:render` on the host. An unprivileged LXC shifts every uid/gid by a fixed offset
+(subuid/subgid mapping), so the host's `render` group GID has no reason to land on anything
+meaningful inside the container's namespace. The bind-mounted device shows up like this from
+inside the container even though the major:minor and file itself are correct:
+
+```
+crw-rw-rw- 1 nobody nogroup 226, 128 ... /dev/dri/renderD128
+```
+
+`nobody:nogroup` is the tell — the device is visible but the owning group means nothing inside
+the container's shifted namespace, so a non-root process (e.g. a `jellyfin` service user) can't
+actually open it despite `ls` showing the device exists. Fix on the **host**, not inside the
+container (the device node is a bind mount of the host's real file — permissions live there):
+
+```bash
+chmod 666 /dev/dri/renderD128
+cat > /etc/udev/rules.d/70-<service>-gpu.rules << 'EOF'
+KERNEL=="renderD128", GROUP="render", MODE="0666"
+EOF
+udevadm control --reload-rules
+```
+
+The udev rule is required for persistence — `/dev/dri` is recreated fresh by the kernel on every
+host boot, so a one-off `chmod` alone reverts on the next reboot. Verify with `pct exec <vmid> --
+ls -la /dev/dri/renderD128` showing `crw-rw-rw-` from inside the container, then confirm the
+consuming application actually opens it (e.g. `vainfo` for VAAPI/QuickSync) rather than trusting
+the permission bits alone.
 
 ## Verification discipline for anything SSH/auth-related
 

@@ -1,7 +1,7 @@
 ---
 name: proxmox-terraform-provisioning
-description: This skill should be used when setting up the bpg/proxmox Terraform provider against a Proxmox host, creating a least-privilege Proxmox API token for Terraform, importing existing LXCs/VMs into Terraform state as a no-op baseline, or creating a brand-new VM (proxmox_virtual_environment_vm) via Terraform — including a "403 ... SDN.Use" error on network_device creation, a download_file resource failing with a permissions/Sys.Modify error, the provider needing SSH access for disk import, or importing an appliance-image VM (UEFI/OVMF, no cloud-init — e.g. Home Assistant OS, pfSense/OPNsense) rather than a Debian cloud image. Trigger phrases include "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2".
-version: 0.2.0
+description: This skill should be used when setting up the bpg/proxmox Terraform provider against a Proxmox host, creating a least-privilege Proxmox API token for Terraform, importing existing LXCs/VMs into Terraform state as a no-op baseline, creating a brand-new VM (proxmox_virtual_environment_vm) via Terraform, or configuring an LXC's device_passthrough or mount_point blocks — including a "403 ... SDN.Use" error on network_device creation, a download_file resource failing with a permissions/Sys.Modify error, the provider needing SSH access for disk import, importing an appliance-image VM (UEFI/OVMF, no cloud-init — e.g. Home Assistant OS, pfSense/OPNsense) rather than a Debian cloud image, a device_passthrough block 403ing with "only allowed for root@pam", or a mount_point's backup=false attribute not actually excluding that volume from vzdump. Trigger phrases include "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2", "device_passthrough", "only allowed for root@pam", "mount_point backup", "GPU passthrough terraform LXC", "renderD128 terraform".
+version: 0.3.0
 ---
 
 # Proxmox + Terraform Provisioning (bpg/proxmox)
@@ -174,3 +174,83 @@ technically matches (no drift) but is worth fixing at creation time rather than 
 Many appliance images (e.g. Home Assistant OS's `_ova-<version>.qcow2.xz` variant) already ship
 with the intended virtual disk size baked in — check with `qemu-img info` after decompressing
 before assuming a post-import `qm resize` is needed; it may already be sized correctly.
+
+## Gotcha 10 — `device_passthrough` is hardcoded to `root@pam` only, no matter how the token is scoped
+
+Building a container that needs a passed-through host device (a GPU render node for hardware
+transcoding, a USB dongle, etc.), the `device_passthrough` block looks like the natural
+declarative fit:
+
+```hcl
+device_passthrough {
+  path = "/dev/dri/renderD128"
+  mode = "0666"
+}
+```
+
+`terraform plan` accepts this fine, but `terraform apply` 403s even for a token holding
+`PVEVMAdmin`:
+
+```
+Error: Container create
+received an HTTP 403 response - Reason: Permission check failed
+(configuring device passthrough is only allowed for root@pam)
+```
+
+This isn't a missing-privilege gap fillable by granting more roles — Proxmox hardcodes this one
+operation to `root@pam` specifically, presumably because arbitrary host-device passthrough is
+close enough to a host-boundary escape that it's deliberately kept out of the ACL system
+entirely. Don't widen the Terraform token's privileges chasing this (there is no role that grants
+it). Instead: drop `device_passthrough` from the Terraform resource, create the container without
+it, then pass the device through with a manual `.conf` edit over root SSH — the same escape hatch
+already used for TUN passthrough (see the `proxmox-ansible-provisioning` skill's Gotcha 7, which
+generalizes to any device, not just TUN):
+
+```bash
+pct stop <vmid>
+cat >> /etc/pve/lxc/<vmid>.conf << 'EOF'
+lxc.cgroup2.devices.allow: c <major>:<minor> rwm
+lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
+EOF
+pct start <vmid>
+```
+
+Document in the `.tf` file's comments *why* the device isn't there declaratively (so a future
+`terraform plan -generate-config-out` refresh doesn't lead someone to re-add it and hit the same
+403 again).
+
+## Gotcha 11 — `mount_point.backup = false` doesn't necessarily write `backup=0` into the real container config
+
+A `mount_point` block set with `backup = false` shows correctly in `terraform plan`
+(`+ backup = false`) and gets recorded in `terraform.tfstate` the same way. But the actual
+resulting `mpN` line in `/etc/pve/lxc/<vmid>.conf` after `apply` can come out with **no `backup`
+flag at all**:
+
+```
+mp0: local-zfs:subvol-142-disk-1,mp=/mnt/media,size=500G
+```
+
+Proxmox's own default for a *volume* mount point (as opposed to a bind-mount of an existing host
+directory) is **backed-up-by-default** when the flag is absent — so this silently backs up the
+full volume nightly despite Terraform state insisting `backup: false` is already in effect. This
+is a real drift between what Terraform believes and what vzdump will actually do, and `terraform
+plan` won't show it as drift either (state matches what Terraform wrote, it's the provider's
+write-to-Proxmox step that didn't fully land).
+
+**Don't trust the state file's `backup` attribute as proof of the real on-disk behavior for this
+attribute specifically.** Verify directly after apply:
+
+```bash
+grep ^mp0 /etc/pve/lxc/<vmid>.conf   # look for `,backup=0` explicitly present
+```
+
+If it's missing, fix with a direct `pct set`, which does write the flag correctly:
+
+```bash
+pct set <vmid> -mp0 local-zfs:subvol-<vmid>-disk-1,mp=/mnt/media,size=500G,backup=0
+```
+
+Confirm the fix by actually triggering a backup (`vzdump <vmid> --storage <storage>`) and reading
+the log for the exclusion line, rather than just re-checking the config file — the log makes the
+real behavior unambiguous: `excluding volume mount point mp0 ('/mnt/media') from backup
+(disabled)` vs. it silently being included.
