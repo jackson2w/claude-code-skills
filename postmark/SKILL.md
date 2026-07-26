@@ -34,6 +34,33 @@ For any system that supports a generic SMTP smarthost (Postfix `relayhost`, Prox
 
 This is the standard fix when a system is sending real mail that lands in spam: the root cause is almost always missing sender authentication (no SPF/DKIM/DMARC alignment for the sending domain, or direct delivery from an IP with no matching reverse DNS), not email content or formatting. Routing through Postmark (or any authenticated relay) fixes deliverability at the transport layer; polishing subject lines/body content afterward is a separate, smaller improvement.
 
+## Sending via the HTTP API from a bash script
+
+For a script that needs to email a large or dynamic body (a generated report, log tail, etc.)
+rather than a fixed short string, use `POST /email` with the body built via `jq` rather than
+hand-escaping the JSON — `jq --rawfile` reads the body from a file and handles newline/quote
+escaping correctly, which matters once the content is more than a one-liner:
+
+```bash
+payload=$(jq -n \
+  --arg from "$POSTMARK_FROM" \
+  --arg to "$POSTMARK_TO" \
+  --arg subject "Report - $(date +%F)" \
+  --rawfile body /path/to/report.md \
+  '{From:$from, To:$to, Subject:$subject, TextBody:$body, MessageStream:"outbound"}')
+
+curl -s "https://api.postmarkapp.com/email" \
+  -X POST \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "X-Postmark-Server-Token: <server-api-token>" \
+  -d "$payload"
+```
+
+A successful response is JSON with `"ErrorCode":0` and a real `MessageID` — check for that
+directly rather than just trusting a non-error exit code from `curl` (which only confirms the
+HTTP request itself completed, not that Postmark accepted the message).
+
 ## Verifying delivery via the HTTP API
 
 The same Server API Token doubles as the HTTP API credential — don't assume a message was actually delivered just because SMTP accepted it (a `250 OK` from the relay only means it was queued, not delivered). Confirm via the API instead:

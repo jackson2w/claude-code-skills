@@ -1,6 +1,6 @@
 ---
 name: n8n-workflow-api-authoring
-description: This skill should be used when authoring an n8n workflow as JSON to import via n8n's REST API (rather than hand-clicking in the editor), when an n8n HTTP Request node's attached credential seems to be silently ignored, when an n8n Code node throws "Module 'X' is disallowed", when a `{{ }}` expression field throws a bare "invalid syntax", when downstream Code node fields go missing/undefined after an HTTP Request node, or when importing/updating an n8n workflow via `POST`/`PUT /api/v1/workflows` hits errors like "active is read-only", "PATCH method not allowed", or a referenced error-workflow name not resolving. Trigger phrases include "n8n workflow JSON", "n8n REST API import", "n8n credential not working", "n8n expression invalid syntax", "n8n Module crypto is disallowed", "n8n HTTP Request neverError", "n8n workflow active read-only", "POST /api/v1/workflows".
+description: This skill should be used when authoring an n8n workflow as JSON to import via n8n's REST API (rather than hand-clicking in the editor), when an n8n HTTP Request node's attached credential seems to be silently ignored, when an n8n Code node throws "Module 'X' is disallowed", when a `{{ }}` expression field throws a bare "invalid syntax", when downstream Code node fields go missing/undefined after an HTTP Request node, when importing/updating an n8n workflow via `POST`/`PUT /api/v1/workflows` hits errors like "active is read-only", "PATCH method not allowed", or a referenced error-workflow name not resolving, when a Wait-node-delayed check using `$getWorkflowStaticData` gives a stale/wrong answer, or when decoding n8n's SQLite `execution_data` for debugging without an API key. Trigger phrases include "n8n workflow JSON", "n8n REST API import", "n8n credential not working", "n8n expression invalid syntax", "n8n Module crypto is disallowed", "n8n HTTP Request neverError", "n8n workflow active read-only", "POST /api/v1/workflows", "getWorkflowStaticData stale", "n8n Wait node static data", "n8n execution_data flatted decode".
 ---
 
 # n8n workflow authoring via REST API
@@ -149,6 +149,31 @@ const text = textBlock?.text;
   n8n-internal API key used only for that instance's own execution lookups) — see the security
   note below for where to draw the line.
 
+## No usable API key? Update via the `n8n` CLI instead of the REST API
+
+If no REST API key value was ever persisted (n8n never returns a key's raw value after creation)
+and minting a fresh one means a human clicking through the editor UI, the `n8n` CLI is a
+legitimate DB-backed alternative, run over SSH on the host with `N8N_USER_FOLDER` set to the
+service's data dir:
+
+```
+n8n export:workflow --id=<id> --pretty --output=file.json   # rollback point
+# ...edit file.json's nodes/connections, keep "id" and "active"...
+n8n import:workflow --input=file.json                       # updates in place by matching "id"
+```
+
+Two gotchas:
+
+- **`import:workflow` always deactivates the workflow**, regardless of the JSON's `"active"`
+  field. `--activeState=fromJson` would preserve it but only works in queue/multi-main mode — on
+  a single-instance deployment it errors outright. Reactivate instead with the deprecated but
+  functional `update:workflow --id=<id> --active=true`.
+- **Neither CLI command notifies the already-running server process** — both write straight to
+  the DB, but a webhook's active registration lives in the running process's memory (set at
+  startup). The CLI says as much (`Note: Changes will not take effect if n8n is running...`).
+  `systemctl restart n8n` (or equivalent) is required afterward for the new node graph to
+  actually take effect; verify via the startup log's `Activated workflow "<name>"` line.
+
 ## Where secrets should and shouldn't flow
 
 Workflow JSON only ever *references* a credential by id/name — it never embeds a secret value.
@@ -167,6 +192,21 @@ consuming side `read` it from stdin into a shell variable used immediately, not 
 positional argument or a file. This keeps the value out of both the visible output and any
 on-disk trace, and out of shell history/process-argument visibility on either host.
 
+**Rotating an *existing* credential's value is a different case from creating a new one, and API
+scripting is fine here even for a genuine third-party secret** — the "create by hand in the
+editor" guidance above is about not having a *brand-new* secret value pass through a script; once
+a credential already exists, `PATCH /api/v1/credentials/{id}` updates it in place (confirmed
+working 2026-07-19, `credentialSchema`-shaped `data` object, e.g.
+`{"name": "...", "type": "telegramApi", "data": {"accessToken": "...", "baseUrl": "..."}}` for a
+Telegram credential — the GET response never echoes `data` back, consistent with n8n's
+write-only-secrets design). Since the destination here is an HTTPS API rather than another
+SSH-reachable host, the host-to-host pipe pattern above doesn't directly apply — instead, build
+the request body **server-side, on the same host that already holds the source value** (e.g. a
+small Python script using `urllib`/`requests`, run over SSH on that host), so the raw value only
+ever exists in that host's process memory long enough to make the API call, and never appears in
+any command's arguments, any intermediate file, or anything that flows back to the calling
+session. See the `credential-rotation-protocol` skill for the general version of this pattern.
+
 ## Debugging a failed execution via the API
 
 `GET /api/v1/executions/{id}?includeData=true` returns the full run, including
@@ -174,3 +214,46 @@ on-disk trace, and out of shell history/process-argument visibility on either ho
 `data.resultData.runData` (a per-node log of what each node actually received/returned — the
 fastest way to see exactly which field was `undefined` or which status code came back, rather
 than guessing from the workflow JSON alone).
+
+## `$getWorkflowStaticData` is unsafe as a signal between separate webhook executions when a Wait node is involved
+
+`$getWorkflowStaticData('global')` looks like a simple shared mutable object any node in the
+workflow can read/write, and it does persist to the `workflow_entity.staticData` column across
+runs. But **a paused Wait-node execution resumes from a snapshot of static data taken when it
+started/was queued, not a live re-read of the current DB row.** If workflow logic looks like
+"execution A writes a completion flag, execution B (paused in a Wait node since before A started)
+reads that flag after waking up," B will not see A's write even though A's write landed in the DB
+well before B resumed — B is working from stale state captured at its own start time. This is
+easy to hit with a "did event Y happen before this timeout" pattern across two different webhook
+event types hitting the same workflow. Confirmed by inspecting real execution data (see below):
+both executions agreed on the same business key (a meeting ID in this case), ruling out a
+data-shape mismatch — the write was simply invisible to the already-paused reader.
+
+**Fix:** don't use static data as a cross-execution signal when a Wait node separates the writer
+and reader in time. Make the post-wait check authoritative against real external state instead —
+e.g., query the actual system of record (a GitHub file's existence, a database row, an API) for
+whatever the "did it happen" question really depends on. Regular node-to-node references
+(`$json`, `$('Node Name')`) are NOT affected by this — they're part of the execution's own
+persisted run data and survive a Wait-node pause/resume correctly; it's specifically the
+*workflow-global* static data object that's snapshotted.
+
+## Decoding execution data straight from n8n's SQLite DB (no API key needed)
+
+When there's no REST API key and you need to inspect real historical execution payloads/outputs
+(e.g. to diagnose the static-data issue above), n8n's `execution_data.data` column is
+`flatted`-encoded (a deduplicating JSON serialization, not plain JSON) — `JSON.parse` on it
+fails or produces garbage. Decode with the `flatted` package n8n already ships:
+
+```js
+const { parse } = require('/usr/lib/node_modules/n8n/node_modules/flatted/cjs/index.js');
+// row.data is the raw column value (read via sqlite3's stdlib module and written to a file —
+// avoid piping through multiple nested SSH hops with inline shell quoting, it mangles the string)
+const data = parse(fs.readFileSync('/tmp/exec_row.json', 'utf8'));
+const run = data.resultData.runData;   // keyed by node name, each an array of run attempts
+console.log(run['Some Node'][0].data.main[0][0].json);
+```
+
+Get the raw row with a small Python script (stdlib `sqlite3`, no CLI tool needed) writing straight
+to a file — safer than threading the value through shell command substitution across an SSH hop.
+`execution_entity` (id, workflowId, status, startedAt, stoppedAt) is plain columns and queryable
+directly; only `execution_data.data` needs the `flatted` decode.

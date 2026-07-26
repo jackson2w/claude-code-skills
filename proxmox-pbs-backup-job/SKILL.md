@@ -113,3 +113,87 @@ INFO: excluding volume mount point mp0 ('/mnt/media') from backup (disabled)
 If a mount point isn't irreplaceable (e.g. it holds the only copy of something), don't exclude it
 from backup without a separate backup plan for that content — flag this explicitly rather than
 silently trading data safety for datastore space.
+
+## A datastore needs a `gc-schedule` set explicitly — it is not on by default
+
+Creating a PBS datastore (`proxmox-backup-manager datastore create`) does **not** set up
+automatic garbage collection. Per-job `--prune-backups` only updates snapshot *metadata*
+(marks old snapshots for removal per retention) — it does not reclaim the underlying chunk-store
+disk space. Without a scheduled GC, deleted/superseded chunks accumulate forever and the
+datastore can silently fill to 100%, causing every subsequent backup job to fail with `No space
+left on device`, even though retention/pruning has been "working" the whole time. Check with:
+
+```bash
+proxmox-backup-manager datastore show <name>   # look for a gc-schedule row; if absent, none is set
+```
+
+Fix — set one at datastore creation time, not as an afterthought:
+
+```bash
+proxmox-backup-manager datastore update <name> --gc-schedule 'sun 04:00'
+```
+
+**GC is two-phase and won't reclaim space on its first run after a big deletion.** Phase 1 marks
+chunks referenced by *current* backup indices; phase 2 sweeps everything else, but only actually
+deletes chunks whose access-time is *older* than a safety cutoff (default ~1 day + 5 min) — chunks
+touched more recently are left as "pending removal" to avoid racing a backup that's still
+mid-upload. A GC run right after deleting several groups can report `Removed garbage: 0 B` while
+also reporting `Pending removals: NN GiB` — this is expected, not a bug; a second GC run once the
+cutoff clears (usually within ~24h of the chunks' last real use) actually frees the space. Don't
+assume GC "didn't work" from a 0 B removal on the first pass — check `Pending removals` in the
+output.
+
+## Monitor datastore disk usage — a full datastore fails every job at once with no advance warning
+
+Nothing about `pvesh get /cluster/backup` or a single job's own history surfaces that the
+*datastore itself* is nearly full — every guest's job just starts failing with `No space left on
+device` the night it tips over 100%, with no warning the nights before. If a nightly/weekly
+backup-status check doesn't already cover this, add a `df -h <datastore-path>` (or the PBS API's
+datastore status endpoint) threshold check (e.g. warn at 80%, fail at 90%) — this is the single
+highest-leverage check for catching the failure mode below before it happens, rather than
+diagnosing it after the fact. Hit this for real 2026-07-19: `pihole-and-friends` hit 100% used
+(93GB/98GB) overnight, failing Homepage/n8n/Immich's jobs simultaneously; root cause was two
+compounding gaps — no `gc-schedule` (above) plus stale backups for four services decommissioned
+days earlier never pruned (see next section) — neither of which any monitoring caught until
+backups actually started failing. The homelab project's nightly backup summary
+(`backup-status-checks.sh`) now implements exactly this check (added same day) — use it as a
+reference implementation (a plain `df --output=pcent`/`--output=avail` SSH call, two thresholds,
+feeding into the same overall-status/follow-up-prompt machinery as its per-job checks) rather
+than reinventing the shape for a new project.
+
+## When decommissioning a guest, its PBS backups don't disappear with it — decide on them explicitly
+
+Destroying a VM/LXC via Terraform/`pct destroy`/`qm destroy` does **not** touch its existing PBS
+backups — they sit in the datastore under their own group (`ct/<vmid>` or `vm/<vmid>`) consuming
+real disk space indefinitely, since nothing is left to trigger their retention-based pruning
+(that only happens as a side effect of a *new* backup running via `--prune-backups`, which will
+never happen again for a destroyed guest). "Let them age out naturally per retention" is not
+actually true for a decommissioned guest — there is no more pruning happening, so they simply sit
+there consuming datastore capacity forever unless removed explicitly. Delete a decommissioned
+guest's backup group via the PBS API (no CLI subcommand exists for this as of this writing):
+
+```bash
+# from the PBS host itself, using a scoped API token (create one, grant DatastoreAdmin
+# on /datastore/<name>, delete both when done — see below)
+curl -sk -X DELETE \
+  -H "Authorization: PBSAPIToken=<tokenid>:<secret>" \
+  "https://localhost:8007/api2/json/admin/datastore/<name>/groups?backup-type=<ct|vm>&backup-id=<vmid>"
+# response: {"data":{"protected-snapshots":0,"removed-groups":1,"removed-snapshots":N}}
+```
+
+If you don't already have a token scoped for datastore admin, mint a short-lived one and delete
+it again afterward rather than widening a long-lived credential's scope:
+
+```bash
+proxmox-backup-manager user generate-token root@pam housekeeping-tmp --comment '<why, and expected deletion>'
+proxmox-backup-manager acl update /datastore/<name> DatastoreAdmin --auth-id 'root@pam!housekeeping-tmp'
+# ... do the deletes ...
+proxmox-backup-manager acl update /datastore/<name> DatastoreAdmin --auth-id 'root@pam!housekeeping-tmp' --delete
+proxmox-backup-manager user delete-token root@pam housekeeping-tmp
+```
+
+This is a real, deliberate decision point, not a formality — add "prune PBS backups for the
+decommissioned guest (or explicitly note you're keeping them and for how long)" to whatever
+decommission checklist you're following, alongside the already-standard Prometheus/Homepage/
+Pi-hole-DNS/Tailscale-device cleanup steps. Run GC (above) afterward to actually reclaim the
+freed chunks.

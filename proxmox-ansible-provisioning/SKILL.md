@@ -1,7 +1,7 @@
 ---
 name: proxmox-ansible-provisioning
-description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC, or any host device (GPU render node, USB dongle) bind-mounted into an unprivileged LXC showing up owned by `nobody:nogroup`. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC", "device passthrough nobody nogroup", "renderD128 permission denied LXC", "GPU passthrough unprivileged LXC", "chmod 666 dev dri".
-version: 0.2.0
+description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC, any host device (GPU render node, USB dongle) bind-mounted into an unprivileged LXC showing up owned by `nobody:nogroup`, or an LXC's own dashboard/monitoring reporting a suspiciously high load average that doesn't match its actual workload. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC", "device passthrough nobody nogroup", "renderD128 permission denied LXC", "GPU passthrough unprivileged LXC", "chmod 666 dev dri", "loadavg LXC host contamination", "/proc/loadavg not namespaced", "LXC excessive load false alarm".
+version: 0.3.0
 ---
 
 # Proxmox + Ansible Provisioning
@@ -219,6 +219,29 @@ host boot, so a one-off `chmod` alone reverts on the next reboot. Verify with `p
 ls -la /dev/dri/renderD128` showing `crw-rw-rw-` from inside the container, then confirm the
 consuming application actually opens it (e.g. `vainfo` for VAAPI/QuickSync) rather than trusting
 the permission bits alone.
+
+## Gotcha 9 — `/proc/loadavg` inside an unprivileged LXC is the *host's* load, not the container's
+
+Unlike cgroup-scoped CPU/memory accounting, Linux's load average is a kernel-wide number — it
+isn't namespaced per-container. An unprivileged LXC shares the host's kernel, so any tool reading
+`/proc/loadavg` from inside the container (uptime, an app's own health-check log, a dashboard
+warning) is actually reporting the host's system-wide load, contaminated by every other guest and
+by the host's own QEMU threads for its VMs. A container can look "overloaded" purely because
+something unrelated — another guest's backup job, a different VM's CPU-heavy task — is busy on
+the *host* at that moment, with the container itself sitting near idle.
+
+Confirmed live 2026-07-23: `pihole` (LXC, 1 vCPU at the time) showed recurring "excessive load"
+warnings that tracked a nightly Cloudflare R2 backup sync running as a *different* guest (a VM).
+Pulled `node_load15` for both `instance=pve` (the host) and `instance=pihole` from Prometheus —
+identical to the decimal, every night, at the same time. Bumping the LXC's core count (a natural
+first guess, since the warning says "N > number of processors") does nothing for this, since it's
+not the LXC's own demand driving the number in the first place.
+
+Before adding cores/CPU limits to "fix" a load warning on an LXC, check whether the number matches
+the **host's** load at the same timestamps (Prometheus `node_load15{instance="<host>"}` vs.
+`node_load15{instance="<lxc>"}`, or just `ssh <lxc> uptime` and `ssh <host> uptime` back to back) —
+if they match, the fix is on the host side (find and fix what's actually spiking there), not the
+container.
 
 ## Verification discipline for anything SSH/auth-related
 

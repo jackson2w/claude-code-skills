@@ -1,7 +1,10 @@
 ---
 name: proxmox-terraform-provisioning
-description: This skill should be used when setting up the bpg/proxmox Terraform provider against a Proxmox host, creating a least-privilege Proxmox API token for Terraform, importing existing LXCs/VMs into Terraform state as a no-op baseline, creating a brand-new VM (proxmox_virtual_environment_vm) via Terraform, or configuring an LXC's device_passthrough or mount_point blocks — including a "403 ... SDN.Use" error on network_device creation, a download_file resource failing with a permissions/Sys.Modify error, the provider needing SSH access for disk import, importing an appliance-image VM (UEFI/OVMF, no cloud-init — e.g. Home Assistant OS, pfSense/OPNsense) rather than a Debian cloud image, a device_passthrough block 403ing with "only allowed for root@pam", or a mount_point's backup=false attribute not actually excluding that volume from vzdump. Trigger phrases include "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2", "device_passthrough", "only allowed for root@pam", "mount_point backup", "GPU passthrough terraform LXC", "renderD128 terraform".
-version: 0.3.0
+description: This skill should be used when setting up the bpg/proxmox Terraform provider against a Proxmox host, creating a least-privilege Proxmox API token for Terraform, importing existing LXCs/VMs into Terraform state as a no-op baseline, creating a brand-new VM (proxmox_virtual_environment_vm) via Terraform, or configuring an LXC's device_passthrough or mount_point blocks, or a VM's hostpci block — including a "403 ... SDN.Use" error on network_device creation, a download_file resource failing with a permissions/Sys.Modify error, the provider needing SSH access for disk import, importing an appliance-image VM (UEFI/OVMF, no cloud-init — e.g. Home Assistant OS, pfSense/OPNsense) rather than a Debian cloud image, a device_passthrough block 403ing with "only allowed for root@pam", a mount_point's backup=false attribute not actually excluding that volume from vzdump, a new cloud-init VM booting with no network config at all, `terraform plan -generate-config-out` hanging for many minutes with no error, or declaring a VM's PCI/GPU passthrough (hostpci) block, or a cloud-init VM whose SSH host key
+changed and triggered an unplanned apt dist-upgrade after a Proxmox host reboot with no VM
+config change of its own. Trigger phrases include "instance-id changed", "cloud-init new
+instance re-run", "REMOTE HOST IDENTIFICATION HAS CHANGED after pve reboot", "unexpected dist-upgrade after reboot", "initialization dns block terraform", "pbs.tf immich.tf dns pin", "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2", "device_passthrough", "only allowed for root@pam", "mount_point backup", "GPU passthrough terraform LXC", "renderD128 terraform", "cloud-init ISO stale", "qm set ide2 cloudinit", "no DHCP after cloud-init boot", "generate-config-out hangs", "qemu guest agent not running terraform", "mac_addresses drift docker", "hostpci terraform", "VM PCI passthrough terraform", "rombar drift".
+version: 0.6.0
 ---
 
 # Proxmox + Terraform Provisioning (bpg/proxmox)
@@ -139,12 +142,56 @@ and start `qemu-guest-agent` inside the guest *before* running `generate-config-
 generated its config fine anyway — this requirement seems tied specifically to reading back
 network config normally supplied via cloud-init, not a hard dependency of config generation itself.
 
+**Update (2026-07-18, building Immich):** without the agent installed, `terraform plan
+-generate-config-out` doesn't fail fast with that error — it **hangs silently for the resource's
+full `agent.timeout` window** (default `"15m"`) with the process sitting in `futex_do_wait` and
+near-zero CPU, giving no indication anything is wrong. It looks exactly like a stuck/broken
+Terraform run rather than a clean, documented failure mode. Confirm what's actually happening
+before assuming a hang is a bug: check `qm agent <vmid> ping` on the Proxmox host in another
+session — if it errors `QEMU guest agent is not running`, that's the cause. The fix works
+mid-hang, no need to kill and restart the stuck command: `apt-get install -y qemu-guest-agent &&
+systemctl enable --now qemu-guest-agent` inside the guest (reachable via its DHCP IP over SSH even
+without the agent — the agent is unrelated to normal networking) lets the already-running
+`terraform plan` pick it up and finish within moments.
+
 **Gotcha 8 — the experimental config generator emits some invalid or redundant fields.** Seen
 in practice: `cpu.units = 0` (rejected — valid range is 1–262144; both `cpu.units` and top-level
 `mac_addresses` are optional+computed, so just delete the lines rather than fixing the value), and
 a `network_device.enabled = true` that a deprecation warning says to remove but the schema
 currently still requires — keep it despite the warning. Expect to hand-edit generated VM config
 before it applies cleanly; treat the warning `Config generation is experimental` as accurate.
+
+If the guest runs Docker (building Immich, 2026-07-18), the generated `mac_addresses` list can
+come back with 8-9 entries, not just the real NIC's — the guest agent reports `lo`, `docker0`, and
+a MAC per container's `veth` pair, and the generator dumps all of them in. These are ephemeral
+(change on every `docker compose up`/container recreate), so keeping them in the committed `.tf`
+would cause permanent phantom drift. Same fix as above: delete the `mac_addresses` line entirely
+and rely on the real NIC's `mac_address` already captured inside the `network_device` block.
+
+**Gotcha 12 — setting cloud-init fields (`--ciuser`, `--ipconfig0`, `--sshkeys`) via separate `qm
+set` calls *after* `qm set --ide2 local-zfs:cloudinit` leaves the VM's cloud-init ISO stale.**
+Proxmox only regenerates the NoCloud seed ISO at the moment a cloud-init-relevant flag is set —
+each `qm set` prints `generating cloud-init ISO` when it does this. If `--ide2 ...cloudinit` is
+attached *before* `--ciuser`/`--ipconfig0`/`--sshkeys` are set, the ISO gets baked with defaults
+(no network config, no SSH keys) and never regenerates again from those later calls — the VM then
+boots to a normal login prompt (cloud-init's `set_hostname` module still runs fine, since hostname
+comes from the VM's `name` field independent of the ISO) but with **no network interface
+configured at all**: zero DHCP traffic on the tap interface, not even a failed attempt, indefinitely.
+This is easy to misdiagnose as a DHCP/router problem rather than a stale local config file — checked
+first via `tcpdump -i tap<vmid>i0 port 67 or port 68` (confirms the guest never even tries) and via
+`qm terminal <vmid>` wrapped in `script -qc "... " /dev/null` (a plain `qm terminal` over
+non-interactive SSH fails with `tcgetattr: Inappropriate ioctl for device`; wrapping in `script`
+gives it a pty so it actually attaches and shows the live console, including full dmesg/cloud-init
+boot output if attached right after a `qm reset`).
+
+**Fix: destroy and recreate the VM, setting every cloud-init-relevant flag (`--ciuser`,
+`--ipconfig0`, `--sshkeys`) *before* attaching `--ide2 ...cloudinit`, in one pass** — don't rely on
+a later `qm set` or a reboot to pick up corrected values, since cloud-init's NoCloud datasource
+processes network/user config once per instance and a plain reboot isn't guaranteed to reprocess
+it even after the ISO is regenerated. If the VM already has real data on it (not a fresh build),
+`qm cloudinit update <vmid>` regenerates the ISO from current config without recreating the VM,
+followed by a full guest reboot — but rebuilding fresh is simpler and safer when nothing of value
+exists on the disk yet.
 
 ## Appliance-image VMs (UEFI, no cloud-init) — a third VM shape
 
@@ -254,3 +301,88 @@ Confirm the fix by actually triggering a backup (`vzdump <vmid> --storage <stora
 the log for the exclusion line, rather than just re-checking the config file — the log makes the
 real behavior unambiguous: `excluding volume mount point mp0 ('/mnt/media') from backup
 (disabled)` vs. it silently being included.
+
+## Gotcha 12 — VM `hostpci` (PCI passthrough) is NOT the same root@pam restriction as LXC `device_passthrough`
+
+Don't assume Gotcha 10 above generalizes to VMs. A `proxmox_virtual_environment_vm` resource's
+`hostpci` block for full PCI/GPU passthrough works fine with a scoped API token — `terraform
+plan`/`apply` both succeed cleanly, zero auth errors, confirmed live 2026-07-18 passing an Intel
+iGPU through to a VM:
+
+```hcl
+hostpci {
+  device = "hostpci0"
+  id     = "00:02.0"   # bus:device.function, no domain prefix -- matches `lspci`'s 00:02.0,
+                        # not qm's own "0000:00:02.0" long form
+  pcie   = true
+  rombar = true         # declare explicitly -- Proxmox's live default is `true`; omitting it
+                         # shows as permanent drift (`rombar = true -> null`) every plan
+}
+```
+
+A web search claimed `hostpci` requires root@pam/password auth (same restriction as LXC
+`device_passthrough`) — that turned out to be **wrong** for this provider version, confirmed by
+just trying it. Don't take a search result's word for a permission boundary when it's this cheap
+to verify directly against the real API.
+
+Also set `machine = "q35"` (not left `null`/default i440fx) — recommended for PCIe passthrough
+reliability, and cheap to set regardless. A VM with `hostpci` attached needs a full VM reboot to
+attach the device (not hot-pluggable) — same operational shape as Gotcha 10's LXC pattern, just
+without the Terraform-vs-manual split. See the `proxmox-vm-igpu-passthrough` skill for the full
+host-side (`vfio-pci` binding) and guest-side (kernel/firmware) procedure this Terraform block is
+only one piece of.
+
+## Gotcha 13 — a cloud-init VM with no explicit `dns` block silently inherits `pve`'s own `/etc/resolv.conf`, and `initialization` changes trigger a live guest reboot
+
+If a `proxmox_virtual_environment_vm`'s `initialization` block has no `dns { servers = [...] }`,
+Proxmox's own cloud-init generator (`PVE::QemuServer::Cloudinit.pm`, `get_dns_conf`) falls back
+to the **Proxmox host's** `/etc/resolv.conf` when building the guest's cloud-init network-data —
+not a guest-level default, the actual hypervisor's own resolver config. This matters because
+NoCloud's `instance-id` is computed as `sha1(user-data + network-data)` (`nocloud_gen_metadata`),
+so **any future change to the host's `/etc/resolv.conf` silently changes the instance-id of every
+cloud-init VM without a pinned `dns` block**, even though nothing about the VM itself changed.
+
+The next time such a VM boots (a `pve` host reboot restarts every guest on a single-node
+cluster), cloud-init sees a "new" instance-id and re-runs every once-per-instance module:
+**full SSH host-key regeneration** (all key types — this is what breaks `known_hosts` on
+whatever host SSHes into it, see the general host-key-verification-failed gotcha elsewhere in
+this project) and, if `upgrade = true` is set in `initialization` (as it commonly is, to patch a
+freshly-created VM on first boot), **a full unattended `apt-get dist-upgrade`** — a real,
+surprising side effect that has nothing to do with why the host actually rebooted.
+
+Confirmed live 2026-07-18/19: `pve`'s `/etc/resolv.conf` changed as part of an unrelated DNS
+routing overhaul; the next `pve` reboot (days later, for unrelated iGPU passthrough work)
+silently regenerated the SSH host keys and ran a full `dist-upgrade` on two VMs (`pbs`,
+`immich`) that both lacked an explicit `dns` block.
+
+**Fix — always pin `dns` explicitly on every cloud-init VM**, even when it happens to match what
+the host would currently provide anyway:
+
+```hcl
+initialization {
+  datastore_id = "local-zfs"
+  interface    = "ide2"
+  upgrade      = true
+  dns {
+    domain  = "local"
+    servers = ["192.168.50.53"]
+  }
+  ip_config { ... }
+  user_account { ... }
+}
+```
+
+This makes the network-data (and therefore instance-id) depend only on Terraform-declared
+values, never on `pve`'s own resolver state.
+
+**Applying this fix itself triggers exactly one more instance-id change** (the network-data
+content is changing, by design) — expect one more SSH-key regen + dist-upgrade cycle on
+whichever VM(s) you patch. Also confirmed: unlike most `initialization` sub-block edits, this one
+does **not** just update Proxmox-side metadata — `terraform apply` visibly reboots the running
+guest live (~20s "Modifying...", uptime resets to 0 immediately after) to make cloud-init re-read
+the changed data. Budget for that; it's not a no-op update-in-place the way most attribute
+changes in this block are (see Gotcha 2 above for the ones that genuinely are harmless).
+
+**Verify the fix actually stuck** by re-checking `qm cloudinit dump <vmid> network` for the `dns`
+section post-apply, and confirming `terraform plan` shows zero drift afterward — don't just trust
+that the apply succeeded.
