@@ -1,6 +1,6 @@
 ---
 name: proxmox-ansible-provisioning
-description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC, any host device (GPU render node, USB dongle) bind-mounted into an unprivileged LXC showing up owned by `nobody:nogroup`, or an LXC's own dashboard/monitoring reporting a suspiciously high load average that doesn't match its actual workload. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC", "device passthrough nobody nogroup", "renderD128 permission denied LXC", "GPU passthrough unprivileged LXC", "chmod 666 dev dri", "loadavg LXC host contamination", "/proc/loadavg not namespaced", "LXC excessive load false alarm".
+description: This skill should be used when creating a new Proxmox LXC (pct create) or VM, writing or debugging Ansible playbooks that target Proxmox/Debian hosts (including Debian 13/trixie), or troubleshooting a Proxmox+Ansible workflow — a "storage 'local-lvm' does not exist" error, a "Systemd 257 detected" nesting warning, Ansible failing with a locale error inside a fresh LXC, an Ansible lineinfile task that keeps reporting changed on every run, writing multi-line config/YAML files to a remote host over SSH, an "apt-key or gpg binary is required" error from Ansible's apt_repository module, a Proxmox-family product (PVE/PBS/PMG) apt install failing with a 401 against enterprise.proxmox.com, Tailscale/anything needing `/dev/net/tun` stuck crash-looping inside an unprivileged LXC, any host device (GPU render node, USB dongle) bind-mounted into an unprivileged LXC showing up owned by `nobody:nogroup`, or an LXC's own dashboard/monitoring reporting a suspiciously high load average that doesn't match its actual workload. Trigger phrases include "pct create", "pvesm status", "local-lvm", "local-zfs", "unprivileged LXC", "nesting=1", "Ansible could not initialize the preferred locale", "lineinfile idempotency", "ansible-playbook --check failing", "pct exec", "apt-key deprecated", "apt_repository module failed", "enterprise repo 401 unauthorized", "pbs-enterprise.sources", "/dev/net/tun does not exist", "tailscaled activating auto-restart", "TUN passthrough LXC", "device passthrough nobody nogroup", "renderD128 permission denied LXC", "GPU passthrough unprivileged LXC", "chmod 666 dev dri", "loadavg LXC host contamination", "/proc/loadavg not namespaced", "LXC excessive load false alarm", "Jinja Syntax error Missing end of comment tag", "ansible template array length bash", "${#array[@]} jinja", "ansible --start-at-task check diff", "template drifted from live script".
 version: 0.3.0
 ---
 
@@ -115,6 +115,27 @@ with something like `Destination ... does not exist`. This isn't a bug — check
 actually perform the install, so the file genuinely isn't there yet to edit. Don't chase this as a
 real error; either add `create: true` to make the task robust regardless, or just verify by
 running for real (against a low-risk target first if the playbook touches anything sensitive).
+If you only need to validate a *later* task in the same play (e.g. a `template`/`copy` task
+further down whose rendering you want to `--diff`-check without wading through an earlier task's
+known false failure), use `--start-at-task="<exact task name>"` to jump straight past it rather
+than fighting the earlier task into passing.
+
+## Gotcha 10 — a Jinja2 template containing bash's `${#array[@]}` fails to render at all
+
+`{#` is Jinja2's comment-start delimiter, and it doesn't care that it's sitting inside a `${...}`
+bash expansion — the template lexer treats raw text left-to-right regardless of surrounding shell
+syntax. Any `.sh.j2` template with bash array-length syntax (`${#PARTS[@]}`, `${#some_array[@]}`)
+fails with `Syntax error in template: Missing end of comment tag` the moment Ansible tries to
+render it (`ansible.builtin.template`), even though the file is perfectly valid bash on its own
+and passes `bash -n` fine as a plain script. This only bites templates, not `ansible.builtin.copy`
+of a static file — a script can be deployed unmodified for a long time via `copy` and only surface
+this the day it's converted to a `template` (e.g. to parameterize a path that used to be
+hardcoded). Fix: wrap just the array-length expression in a raw block so Jinja emits it literally:
+```
+if [ "{% raw %}${#PARTS[@]}{% endraw %}" -gt 0 ]; then
+```
+Confirmed live 2026-07-29 reconstructing `r2-backup-sync.sh.j2` in `homelab-ansible` from a live
+script that had drifted ahead of its template — the render failed opaquely until this was spotted.
 
 ## Gotcha 6 — Ansible's `apt_repository` module fails on Debian 13; and Proxmox-family packages auto-add a paid enterprise repo that 401s
 
