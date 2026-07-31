@@ -1,6 +1,6 @@
 ---
 name: proxmox-node-systemd-service
-description: This skill should be used when deploying a Node.js application (Next.js, n8n, or any pnpm/npm-based app) as a native systemd service inside an unprivileged Proxmox LXC, instead of Docker — installing Node via NodeSource, running a dedicated non-root service user, building with pnpm, and exposing it only over Tailscale Serve. Also covers debugging an Ansible playbook for this pattern that never reports `changed=0` on a repeat run, a "detected dubious ownership in repository" git error, a service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale, or an app that fails to write scratch/upload files under `/tmp` despite the service showing active. Trigger phrases include "run Node app as systemd service", "NodeSource install Ansible", "pnpm build systemd", "next start binds 0.0.0.0", "HOSTNAME env var not working Next.js", "ansible git dubious ownership", "git module changed every run", "recursive chown always changed ansible", "Docker-in-LXC alternative for Node app", "ProtectSystem strict /tmp ENOENT", "PrivateTmp systemd Node app".
+description: This skill should be used when deploying a Node.js application (Next.js, n8n, or any pnpm/npm-based app) as a native systemd service inside an unprivileged Proxmox LXC, instead of Docker — installing Node via NodeSource, running a dedicated non-root service user, building with pnpm, and exposing it only over Tailscale Serve. Also covers debugging an Ansible playbook for this pattern that never reports `changed=0` on a repeat run, a "detected dubious ownership in repository" git error, a service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale, or an app that fails to write scratch/upload files under `/tmp` despite the service showing active. Trigger phrases include "run Node app as systemd service", "NodeSource install Ansible", "pnpm build systemd", "next start binds 0.0.0.0", "HOSTNAME env var not working Next.js", "ansible git dubious ownership", "git module changed every run", "recursive chown always changed ansible", "Docker-in-LXC alternative for Node app", "ProtectSystem strict /tmp ENOENT", "PrivateTmp systemd Node app", "npm install -g version bump not applying", "creates guard blocks upgrade", "bumping n8n_version does nothing", "ansible pinned npm package upgrade".
 ---
 
 # Native Node.js app as a systemd service in a Proxmox LXC
@@ -202,6 +202,45 @@ ReadWritePaths=/opt/{{ app_user }}/app
 
 Don't reach for adding `/tmp` to `ReadWritePaths=` instead — that shares the real `/tmp` across
 every service on the host, which `PrivateTmp` is specifically designed to avoid.
+
+## Gotcha 6 — a `creates:`-guarded `npm install -g <pkg>@{{ version }}` silently does NOT apply a version bump on re-run
+
+Gotcha 2 above covers `creates:`-guarded build steps (git clone, pnpm build) where the fix is
+"clear the guard file/directory, then re-run the playbook." A **globally npm-installed pinned
+binary** (n8n's actual install pattern, not Homepage's git-clone pattern) is a different flavor
+of the same trap, confirmed live 2026-07-31 bumping n8n 2.29.10 → 2.32.7:
+
+```yaml
+- name: Install n8n globally (pinned version)
+  ansible.builtin.command: npm install -g n8n@{{ n8n_version }}
+  args:
+    creates: /usr/bin/n8n
+```
+
+Bumping `n8n_version` in the var and re-running the playbook does **nothing** — the `creates:`
+guard sees `/usr/bin/n8n` already exists (from the *previous* version's install) and skips the
+task entirely, regardless of what version the var now says. Unlike Gotcha 2's git-clone case,
+there's no directory to clear here that would make sense to clear — `/usr/bin/n8n` is the
+real, working binary a live service depends on.
+
+**The underlying tool itself is NOT the problem, though** — `npm install -g <pkg>@<version>`
+run directly (outside Ansible entirely) genuinely does upgrade an already-installed global
+package in place; npm has no equivalent idempotency guard of its own. The fix for an in-place
+version bump is therefore: bypass Ansible for the actual upgrade, then update the var afterward
+purely so a future from-scratch rebuild lands on the right version:
+
+```bash
+npm install -g n8n@2.32.7        # upgrades in place, no Ansible involved
+systemctl restart n8n            # the env-file-change restart handler won't fire for this,
+                                  # since nothing Ansible-managed actually changed
+n8n --version                    # confirm before considering it done
+```
+
+Then bump the `n8n_version` var in the playbook and commit — it won't retroactively apply
+anything, it only affects what a fresh host build installs. Document this asymmetry in a
+comment next to the `creates:` guard itself, since it's easy for a future edit to assume
+(reasonably, but wrongly) that the var is the single source of truth for what's actually
+running.
 
 ## systemd unit template
 

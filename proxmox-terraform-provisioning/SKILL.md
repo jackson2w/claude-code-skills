@@ -3,8 +3,10 @@ name: proxmox-terraform-provisioning
 description: This skill should be used when setting up the bpg/proxmox Terraform provider against a Proxmox host, creating a least-privilege Proxmox API token for Terraform, importing existing LXCs/VMs into Terraform state as a no-op baseline, creating a brand-new VM (proxmox_virtual_environment_vm) via Terraform, or configuring an LXC's device_passthrough or mount_point blocks, or a VM's hostpci block — including a "403 ... SDN.Use" error on network_device creation, a download_file resource failing with a permissions/Sys.Modify error, the provider needing SSH access for disk import, importing an appliance-image VM (UEFI/OVMF, no cloud-init — e.g. Home Assistant OS, pfSense/OPNsense) rather than a Debian cloud image, a device_passthrough block 403ing with "only allowed for root@pam", a mount_point's backup=false attribute not actually excluding that volume from vzdump, a new cloud-init VM booting with no network config at all, `terraform plan -generate-config-out` hanging for many minutes with no error, or declaring a VM's PCI/GPU passthrough (hostpci) block, or a cloud-init VM whose SSH host key
 changed and triggered an unplanned apt dist-upgrade after a Proxmox host reboot with no VM
 config change of its own. Trigger phrases include "instance-id changed", "cloud-init new
-instance re-run", "REMOTE HOST IDENTIFICATION HAS CHANGED after pve reboot", "unexpected dist-upgrade after reboot", "initialization dns block terraform", "pbs.tf immich.tf dns pin", "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2", "device_passthrough", "only allowed for root@pam", "mount_point backup", "GPU passthrough terraform LXC", "renderD128 terraform", "cloud-init ISO stale", "qm set ide2 cloudinit", "no DHCP after cloud-init boot", "generate-config-out hangs", "qemu guest agent not running terraform", "mac_addresses drift docker", "hostpci terraform", "VM PCI passthrough terraform", "rombar drift".
-version: 0.6.0
+instance re-run", "REMOTE HOST IDENTIFICATION HAS CHANGED after pve reboot", "unexpected dist-upgrade after reboot", "initialization dns block terraform", "pbs.tf immich.tf dns pin", "bpg/proxmox", "terraform import proxmox", "pveum token add", "terraform plan -generate-config-out", "PVEVMAdmin", "proxmox_virtual_environment_container", "proxmox_virtual_environment_vm", "Terraform Proxmox provider", "import existing LXC into terraform", "SDN.Use", "qm importdisk terraform", "proxmox_download_file", "ovmf", "efidisk0", "appliance image proxmox", "haos qcow2", "device_passthrough", "only allowed for root@pam", "mount_point backup", "GPU passthrough terraform LXC", "renderD128 terraform", "cloud-init ISO stale", "qm set ide2 cloudinit", "no DHCP after cloud-init boot", "generate-config-out hangs", "qemu guest agent not running terraform", "mac_addresses drift docker", "hostpci terraform", "VM PCI passthrough terraform", "rombar drift", "grow VM disk terraform", "terraform disk resize proxmox", "resize scsi0",
+"systemd-growfs proxmox vm", "growpart not needed terraform", "terraform plan -target disk
+resize".
+version: 0.7.0
 ---
 
 # Proxmox + Terraform Provisioning (bpg/proxmox)
@@ -386,3 +388,46 @@ changes in this block are (see Gotcha 2 above for the ones that genuinely are ha
 **Verify the fix actually stuck** by re-checking `qm cloudinit dump <vmid> network` for the `dns`
 section post-apply, and confirming `terraform plan` shows zero drift afterward — don't just trust
 that the apply succeeded.
+
+## Gotcha 14 — growing a VM's disk is a one-line `.tf` edit; no `qm resize`, no `growpart`, no reboot needed
+
+Growing an existing `disk` block's `size` (e.g. an OS disk that's run low on space) is
+Terraform-native end to end for a Debian cloud-image VM — confirmed live 2026-07-31 growing
+Immich's scsi0 disk 20GB → 40GB while the VM stayed running:
+
+```hcl
+disk {
+  interface         = "scsi0"
+  path_in_datastore = "vm-145-disk-0"
+  size              = 40   # was 20
+  # ...unchanged attributes
+}
+```
+
+```bash
+terraform plan -target='proxmox_virtual_environment_vm.<name>' -out=resize.tfplan  # confirm ONLY size changes
+terraform apply resize.tfplan
+```
+
+**No manual `qm resize` step is needed** — unlike `hostpci`/`device_passthrough` (Gotchas 10/12
+above), a plain disk resize is not a permission gap the scoped API token hits; the provider
+applies it directly via API, no root SSH involved.
+
+**No `growpart`/`resize2fs` inside the guest either, and no reboot** — Debian's cloud image
+ships `systemd-growfs`, which reacts to the live block-device size change and grows the
+partition + filesystem automatically, seemingly triggered by the udev "change" event the
+resize generates rather than requiring a fresh boot. Confirmed via `df -h /` before and after
+with no guest-side commands run at all: available space jumped from ~800MB to 22GB within
+moments of the `terraform apply` completing.
+
+Verify both layers, not just one: `qm config <vmid> | grep scsi0` on the Proxmox host confirms
+the real underlying disk grew (not just Terraform state), and `df -h` inside the guest
+confirms the filesystem actually grew too (not just the block device). Finish with an
+untargeted `terraform plan` — it should show zero drift, confirming the `-target` apply didn't
+leave anything else out of sync.
+
+This is specifically about a disk already in active use as a live filesystem on a modern
+Debian cloud image (GPT partition table with the growfs auto-resize attribute). A non-root
+data disk, an older/non-cloud image, or a non-GPT layout may still need manual
+`growpart`/`resize2fs` — don't assume the zero-touch behavior generalizes without checking
+`df -h` after the fact regardless of which case applies.
