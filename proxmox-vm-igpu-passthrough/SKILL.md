@@ -207,6 +207,50 @@ dmesg | tail -15   # look for "Finished loading DMC firmware" / "GuC ... version
    queue depth twice a fixed interval apart and confirm the trend flips from growing to
    shrinking — the same test that proved the bottleneck existed is what proves the fix worked.
 
+## Gotcha: guest hangs completely on the first boot after a host reboot
+
+Confirmed twice on an Alder Lake-N iGPU passed through to an Immich VM (2026-08-03, 2026-08-09):
+after a `pve` host reboot, the *first* guest boot to touch the passed-through device can freeze
+solid — not a slow service, the whole guest. Signature: `journalctl -b` shows a normal boot
+reaching `Startup finished` (~8s), network/cloud-init complete fine, then the journal goes
+completely silent (zero `docker.service`/downstream-service activity at all) shortly after a
+stall in `systemd-timesyncd`. The VM stays "running" at the hypervisor level for as long as
+you'll wait — no OOM kill, no panic, no crash logged anywhere. A second `qm stop`/`qm start` of
+the *same* guest (no host reboot in between) reliably boots clean.
+
+**Diagnose**: compare the hung boot against a clean one on the same guest:
+
+```bash
+journalctl --list-boots               # find the hung generation (its LAST ENTRY timestamp is
+                                        # minutes/hours before the VM was actually stopped --
+                                        # that gap between logged-until and stopped-at IS the hang)
+journalctl -b -1 --no-pager | tail -80 # or whatever index the hung boot is
+journalctl -b 0  --no-pager | grep -iE 'timesyncd|docker|Startup finished|i915|Cannot find any crtc'
+```
+
+Check the i915 driver messages in both — an upstream `WARNING: ... intel_bios_init` VBT-parsing
+bug is common and **benign** on this hardware (appears identically on hung and clean boots, i915
+recovers from it fine both times) — don't mistake it for the cause. Also check the host's own
+kernel log for the same window; a real vfio-pci/reset/FLR problem would show there:
+
+```bash
+journalctl -k --since "<window start>" --until "<window end>" | grep -iE 'vfio|iommu|reset|FLR'
+```
+
+If the host log is silent too, the freeze is inside the guest's own first mediated-device
+session — presumed to be a GuC/HuC firmware-load race that's more likely to manifest on a truly
+cold device state (fresh host boot) than on a warm rebind. Not confirmable further without a
+live crash capture (magic SysRq / NMI backtrace mid-hang, not attempted either time).
+
+**Fix that actually worked both times**: don't wait for a generic "is it up yet" health check
+with a long grace period — that just means minutes of avoidable downtime for a failure mode
+that's already known to require exactly one bounce. Add a dedicated boot-triggered systemd
+oneshot, ordered `After=... pve-guests.service`, that waits a short window (~3 min) after `pve`
+itself boots, checks the guest's real online state (Tailscale peer status, not the QEMU guest
+agent — the agent is itself one of the things that never starts during the hang), and
+proactively bounces the guest once if still offline. Full implementation (Ansible playbook +
+templates) in the homelab's `post-reboot-bounce.service` — see `project_boot_watchdog` memory.
+
 ## Reverting
 
 ```bash
