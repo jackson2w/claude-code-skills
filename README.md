@@ -37,6 +37,9 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
   free/no-subscription PVE or PBS install.
 - **proxmox-vzdump-notifications** — customizing Proxmox's Handlebars backup-notification
   templates and testing them without waiting for (or triggering) a real backup job.
+- **proxmox-zfs-root-mirror** — converting a single-disk ZFS root pool (`rpool`) into a live
+  mirror, swapping a drive out, and growing the mirror to full capacity — all via `zpool
+  attach`/`detach`/`online -e`, no Proxmox reinstall or guest restore-from-backup needed.
 - **tailscale-pihole-dns-routing** — the interaction between Tailscale's tailnet-wide DNS
   override, MagicDNS, and Pi-hole — why a host can silently bypass Pi-hole even though DNS
   still resolves, and the systemd-resolved split-DNS fix.
