@@ -236,6 +236,11 @@ systemctl restart n8n            # the env-file-change restart handler won't fir
 n8n --version                    # confirm before considering it done
 ```
 
+**Also note**: `npm install -g n8n@<version>` routinely exceeds a 2-minute default shell-tool
+timeout (n8n's dependency tree is large) — confirmed both 2026-07-31 (2.29.10→2.32.7) and
+2026-08-16 (2.34.5→2.34.6). Run it backgrounded/with a longer timeout up front rather than
+letting the first attempt time out.
+
 Then bump the `n8n_version` var in the playbook and commit — it won't retroactively apply
 anything, it only affects what a fresh host build installs. Document this asymmetry in a
 comment next to the `creates:` guard itself, since it's easy for a future edit to assume

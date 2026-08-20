@@ -1,6 +1,6 @@
 ---
 name: credential-rotation-protocol
-description: This skill should be used whenever a live credential (API key, bot token, access token, etc.) needs to be rotated — whether because it leaked, is being proactively refreshed, or is being replaced as part of an incident response. Also load it whenever verifying that a credential file/rotation is correct, since that's exactly the step that causes leaks if done wrong. Trigger phrases include "rotate this credential", "the key leaked", "update this token everywhere", "credential rotation", "verify the new key works", "did the secret change".
+description: This skill should be used whenever a live credential (API key, bot token, access token, etc.) needs to be rotated, changed, OR REMOVED ENTIRELY — whether because it leaked, is being proactively refreshed, is being replaced as part of an incident response, or auth is simply being turned off on a service. Disabling/removing a password is the same category of change as rotating it and needs the same consumer inventory — arguably more so, since there's no new value to hand out, only broken consumers to discover the hard way if you skip the check. Also load it whenever verifying that a credential file/rotation is correct, since that's exactly the step that causes leaks if done wrong. Trigger phrases include "rotate this credential", "the key leaked", "update this token everywhere", "credential rotation", "verify the new key works", "did the secret change", "disable the password", "turn off auth", "remove the login requirement", "no longer needs a password".
 ---
 
 # Safe credential rotation protocol
@@ -40,12 +40,28 @@ over `--check --diff`) while flagging the uncertainty explicitly rather than ass
 
 ## Rotation checklist
 
-1. **Enumerate every place the credential is used, before touching anything.** A shared
-   credential (a bot token, a bucket key reused across several jobs) can have more reach than
-   expected. Check project docs for "shared credential" notes, `grep` Ansible playbooks/Terraform
-   for the env var name, list Cloudflare Worker secrets, check any app's own credential store
-   (n8n, etc.). Discovering a forgotten integration point *after* declaring the rotation done
-   means repeating this whole process for something that could have been caught up front.
+**This checklist applies verbatim when *disabling* or *removing* a credential requirement, not
+just when swapping in a new value** — e.g. turning off a service's password/auth entirely. Step 1
+(enumerate consumers) is not optional just because there's no new value to hand out afterward;
+skipping it because "nothing to rotate, just turning it off" is exactly the failure mode this
+section exists to prevent. Confirmed the hard way 2026-08: Pi-hole's admin/API password was
+disabled at Will's request with no consumer inventory done first, silently breaking a Prometheus
+exporter that authenticated to Pi-hole's API — 20 hours of crash-looping and blank dashboards
+before anyone noticed, on infrastructure with an active weekly automated sweep that didn't happen
+to check that particular failure mode either. Full incident: `project_pihole6_exporter_fix`
+memory in the homelab project. It happened to be the *only* consumer that broke this time — that
+was luck, not something the process guaranteed, and isn't a reason to skip the step next time.
+
+1. **Enumerate every place the credential is used, before touching anything** — including before
+   *removing* it, not just before generating a replacement. A shared credential (a bot token, a
+   bucket key reused across several jobs, a service's admin password used by any script that
+   calls its API) can have more reach than expected. Check project docs for "shared credential"
+   notes, `grep` Ansible playbooks/Terraform for the env var name AND for auth-header patterns the
+   service uses (e.g. a service-specific header name, not just the obvious `*_TOKEN` var name),
+   list Cloudflare Worker secrets, check any app's own credential store (n8n, etc.). Discovering a
+   forgotten integration point *after* declaring the change done means repeating this whole
+   process for something that could have been caught up front — or worse, not discovering it until
+   a dashboard has been silently blank for hours.
 2. **Generate the new credential** wherever it's actually minted (dashboard, BotFather, `openssl
    rand`, etc.).
 3. **The human writes it directly to wherever it needs to live** — never pasted into chat (see the

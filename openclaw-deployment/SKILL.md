@@ -1,6 +1,6 @@
 ---
 name: openclaw-deployment
-description: This skill should be used when deploying or debugging a self-hosted OpenClaw (formerly Clawdbot/Moltbot) agent gateway — a Node.js personal-assistant service bridging Telegram/WhatsApp/Discord to an LLM with tool/skill access. Covers install, secure baseline config (loopback bind, token auth, exec approval gating), the two non-obvious config traps that silently break things (model selection vs. API key, exec security vs. ask), Telegram channel lockdown, and building trustworthy custom skills instead of pulling from the unvetted ClawHub marketplace. Trigger phrases include "openclaw config", "openclaw gateway", "tools.exec.security", "openclaw model not found", "ProviderAuthError No API key found for provider openai", "exec denied security=deny", "openclaw dashboard", "openclaw pairing", "ClawHub skill", "openclaw skills install local".
+description: This skill should be used when deploying or debugging a self-hosted OpenClaw (formerly Clawdbot/Moltbot) agent gateway — a Node.js personal-assistant service bridging Telegram/WhatsApp/Discord to an LLM with tool/skill access. Covers install, secure baseline config (loopback bind, token auth, exec approval gating), the two non-obvious config traps that silently break things (model selection vs. API key, exec security vs. ask), Telegram channel lockdown, configuring the web_search tool/Brave provider, voice-note transcription (tools.media.audio/Groq), memory indexing and its embedding-provider auth (openclaw memory index/status), evaluating ClawHub skills/plugins by real usage data, and building trustworthy custom skills instead of pulling from the unvetted ClawHub marketplace. Trigger phrases include "openclaw config", "openclaw gateway", "tools.exec.security", "openclaw model not found", "ProviderAuthError No API key found for provider openai", "exec denied security=deny", "openclaw dashboard", "openclaw pairing", "ClawHub skill", "openclaw skills install local", "openclaw web search", "tools.web.search.provider", "web_search provider is not available", "openclaw plugins install clawhub", "plugins.allow is empty", "tools.media.audio", "voice memo transcription", "openclaw skills search --json", "ClawHub popular skills", "EXTERNALLY-MANAGED pip openclaw", "AgentMail openclaw", "clawdbot paths in skill", "openclaw memory index", "memorySearch.provider", "memory index failed no api key", "credit_balance_exhausted", "insufficient_quota embeddings", "memory index --force", "scoped sudo for openclaw agent", "dispatch script security boundary", "openclaw agent --message-file", "openclaw agent --session-key timeout", "brief openclaw on new capabilities", "openclaw treats primer as prompt injection", "openclaw session jsonl toolCall", "arm olu with new tools", "expand openclaw agent privilege incrementally", "skill_workshop", "openclaw agent rejects everything as injected", "telegram reply quote looks like injection", "exec preflight complex interpreter invocation", "did openclaw actually send this or hallucinate it", "journalctl vs session transcript openclaw", "how to hand openclaw a new capability", "openclaw agent won't trust primer document".
 ---
 
 # OpenClaw deployment
@@ -105,6 +105,84 @@ def find(o, path=''):
 find(s)
 "
 ```
+
+## Gotcha 3 — web_search providers aren't bundled; ClawHub install is required even for "official" ones
+
+Unlike the CLI-wrapper skills (`github`, `weather`), which ship bundled and just need a binary
+(`gh`) present, `tools.web.search` providers like Brave are **not** in the base install.
+`openclaw plugins list` won't show `brave` at all until it's installed — the plugin registry it
+prints only covers model providers + chat channels, not search providers. Setting
+`tools.web.search.provider: "brave"` (or running `openclaw config validate`/`config set`) before
+installing fails with a misleading error:
+
+```
+tools.web.search.provider: web_search provider is not available: brave
+(install or enable plugin "brave", then run openclaw doctor --fix)
+```
+
+`openclaw plugins enable brave` also fails at this point (`Plugin not found: brave`) — `enable`
+only toggles a plugin that's already discovered on disk, it doesn't install one. The actual fix
+is `openclaw plugins search <provider>` to find the ClawHub package (prefer the `official`-tagged
+`@openclaw/<name>-plugin` entry over community alternatives, same trust reasoning as the ClawHub
+section below), then:
+
+```bash
+openclaw plugins install clawhub:@openclaw/brave-plugin
+openclaw config set tools.web.search.provider brave
+sudo systemctl restart openclaw.service   # plugin install requires a gateway restart to load
+```
+
+**`openclaw doctor --fix` does not fix this** — when it hits the same "provider not available"
+error, it silently *deletes* the offending `tools.web.search` block from config instead of
+installing/enabling the plugin, and reports success. Always diff the config before/after running
+`--fix`; don't assume it did the intelligent thing.
+
+A new ClawHub plugin install also triggers a standing warning once `plugins.allow` is empty
+(the default): `discovered non-bundled plugins may auto-load: brave ... To trust them explicitly,
+set plugins.allow`. Fix: read the exact active set from the `[gateway] http server listening (N
+plugins: ...)` log line after a restart — `openclaw plugins list` alone overstates it, since it
+shows every *discovered* bundled plugin (51 on a stock install: unused providers like
+`azure-speech`, `cohere`, `deepgram`, etc. all show `enabled`), not just the ones actually loaded
+at runtime. Set `plugins.allow` to the smaller runtime-active list (confirm it's stable across at
+least two independent restarts before trusting it), e.g.:
+
+```bash
+openclaw config set plugins.allow '["brave","browser","canvas","device-pair","file-transfer","memory-core","ollama","phone-control","talk-voice","telegram"]' --json
+```
+
+The schema notes bundled *chat channel* plugins (telegram, etc.) auto-activate when their channel
+is explicitly enabled even if left off `plugins.allow` — but that exception doesn't cover
+non-channel bundled plugins (`browser`, `canvas`, `memory-core`, ...), so list those explicitly
+too; a partial list silently breaks whatever's left off. This kind of `config set` mid-session can
+land while a real conversation is in flight (Telegram) — the gateway's reload logic detects that
+and *defers the restart* until the in-flight turn/background task finishes
+(`[reload] restart blocked by active background task run(s)`) rather than dropping it, so it's
+safe to apply without warning the user first. After restart, diff the plugin list in the log
+line against the pre-change baseline (should be identical), then re-run the same
+`openclaw agent --json` / `toolSummary` live check to prove the allowlist didn't silently break
+what you were trying to protect.
+
+**Ad-hoc `sudo -u openclaw openclaw ...` CLI commands don't see the service's env vars.**
+Provider API keys (`BRAVE_API_KEY`, etc.) typically live in a file wired into the systemd unit via
+`EnvironmentFile=` — only the actual service process reads that file. A plain `sudo -u openclaw
+openclaw config validate` run by hand won't have the key in its environment even though the
+running service does, and will report the provider as unavailable for what looks like a config
+reason but is really a missing-credential-in-this-shell reason. To test as the CLI would see it in
+production, source the env file and fix `HOME` explicitly (`sudo -E` alone doesn't fix `HOME` when
+switching from root):
+
+```bash
+sudo bash -c 'set -a; source /root/.config/openclaw-*.env; set +a; \
+  sudo -u openclaw HOME=/home/openclaw openclaw config validate'
+```
+
+**Verify a tool actually fired, don't trust "service restarted clean."** `openclaw agent --agent
+<id> -m "<message that forces the tool>" --json` runs a real turn through the live gateway
+(omit `--local` to use the actual running service, not an embedded one-off) and returns a
+`toolSummary: { calls, tools: [...], failures }` field — concrete proof a specific tool executed,
+plus the model's own reply usually names the provider it used. This is the same "verify the
+actual feature, not just connectivity" lesson as the loopback-firewall incident below, applied to
+a new feature instead of a new firewall.
 
 ## Exec sandboxing interacts badly with a host-level uid firewall
 
@@ -269,3 +347,657 @@ Logging into the dashboard from a browser takes two more steps beyond just the U
 
 Generate any value that needs to land in either place server-side, in one script, so it never
 transits through your own shell history or an assistant's chat transcript.
+
+## Evaluating ClawHub skills/plugins by real usage, not vibes
+
+`openclaw skills search <query> --json` and `openclaw plugins search <query> --json` return real
+metrics per result: `stats.{installs,downloads,stars}`, `isSuspicious`, and for plugins
+`channel` (`official`/`community`) + `isOfficial`. Use these to rank, don't guess from
+descriptions. Two real findings from a 2026-08-16 survey across ~15 categories on `dfw`:
+
+- **The "plugins" (code-level) family is a much thinner ecosystem than "skills"** (CLI-wrapper
+  style). Outside `@openclaw/`-official entries (Brave, LanceDB memory), almost nothing broke 35
+  installs across a dozen categories checked. Real adoption numbers (500-1500+ installs, dozens
+  of stars) live in the skills family — Slack, PDF, Calendar, Linear, etc. Don't recommend a
+  "plugin" for a capability that has a well-adopted "skill" equivalent instead.
+- **High install/star counts and `isSuspicious: false` don't mean the skill is well-built or
+  even a clean fit** — always read the actual `SKILL.md`/scripts, not just the search-result
+  summary, before installing something security-relevant or expecting a specific behavior:
+  - `ivangdavila/translate` (381 installs, 10★): not a standalone translator — it's a thin skin
+    over a separate third-party product ("Clawic", clawic.com) that expects a whole personal-data
+    directory tree (`~/Clawic/data/contacts/`, `~/Clawic/data/projects/`, `~/Clawic/data/finances/`,
+    `~/Clawic/profile.yaml`) before it'll even activate (`Visible to model: no` until then).
+    Adopting it means adopting a second personal-assistant memory system, not just getting
+    translation. Skip unless that tradeoff is deliberately wanted.
+  - `cclank/news-aggregator-skill` (349 installs, 23★): summary says "8 major sources" but the
+    actual list (read `scripts/fetch_news.py`) is Hacker News, GitHub Trending, Product Hunt, plus
+    **36Kr, Tencent News, WallStreetCN, V2EX, and Weibo** — mostly Chinese tech/finance/social
+    sources, not general news. If that's not wanted, patch the script's `--source all` default
+    (a `sources_map` dict keyed by source name) rather than relying on the agent remembering to
+    pass `--source hackernews,github,producthunt` every time.
+  - `adboio/agentmail` (1138 installs, 66★ — by far the most-used of 5 competing ClawHub wrappers
+    for the same underlying AgentMail service): its bundled example code was written against an
+    older `agentmail` PyPI SDK version. Against the real installed SDK (0.5.9),
+    `client.inboxes.create(username=..., client_id=...)` throws `TypeError: unexpected keyword
+    argument 'username'` — the current SDK wants `client.inboxes.create(request=
+    CreateInboxRequest(username=..., client_id=...))`. `send()` and `list()` still match the
+    documented flat-kwarg style; only `create()` drifted. Check `inspect.signature(...)` against
+    the actually-installed package before trusting a skill's example code verbatim, especially
+    for the first call in a quick-start.
+  - Same skill's "Security: Webhook Allowlist (CRITICAL)" section — the actual defense against
+    prompt-injection-via-arbitrary-inbound-email — was written for the pre-rename **Clawdbot**
+    product and references `~/.clawdbot/hooks/`, `~/.clawdbot/clawdbot.json`, and a `clawdbot
+    gateway restart` command. None of those paths/commands exist on a real OpenClaw install
+    (`~/.openclaw/openclaw.json`, `openclaw gateway restart`). Following it as written produces
+    something that *looks* configured but provides zero actual protection. Grep any
+    security-critical section of a ClawHub skill for stale product-name paths before trusting it
+    — general lesson: a skill's popularity is a signal about the *capability* being useful, not
+    a guarantee the *documentation* was ever updated across a product rename or an SDK major
+    version bump.
+
+## Voice-note transcription (`tools.media.audio`)
+
+Inbound voice notes (Telegram etc.) are transcribed by OpenClaw's own `tools.media.audio`
+pipeline, not by installing a "skill" — this is a core feature, currently unconfigured by
+default. Auto-detect order when no provider is pinned: **Groq → OpenAI → xAI → Deepgram → Google
+→ SenseAudio → ElevenLabs → Mistral**, then local CLI fallback (`whisper-cli`/`whisper`) if no
+provider auth resolves. The legacy `audio.transcription.command` config key still parses but is
+retired — use `tools.media.audio.models` (`openclaw doctor --fix` migrates old `{input}`
+placeholders, not the key itself).
+
+On a small VPS (1 vCPU/4GB), prefer a cloud provider over local Whisper — local transcription adds
+real CPU load per voice note plus first-run model-download latency. **Groq is a good default**:
+first in auto-detect priority, cheap/fast, generous free tier. Setup:
+
+```bash
+openclaw plugins install @openclaw/groq-provider   # official external package, not bundled
+openclaw config set tools.media.audio.models '[{"provider":"groq"}]'
+# bare GROQ_API_KEY in the EnvironmentFile is NOT enough for the audio path -- see below
+openclaw config set models.providers.groq.apiKey '{"source":"env","provider":"default","id":"GROQ_API_KEY"}'
+# add "groq" to plugins.allow if you've locked it down (see the plugins.allow section above)
+sudo systemctl restart openclaw.service
+```
+
+**The docs say a bare `GROQ_API_KEY` env var is sufficient ("Auth env var: GROQ_API_KEY"), and
+two independent checks appeared to confirm that — both were false positives for the audio path
+specifically.** `curl` directly against `api.groq.com/.../audio/transcriptions` with the key
+returned a real 200 + transcript, and `openclaw models list --provider groq` showed every model
+with `Auth: yes`. Both genuinely passed. A real inbound Telegram voice note still failed with
+`[media-understanding] audio: failed (0/1) reason=ProviderAuthError`, even though `GROQ_API_KEY`
+was confirmed present in the actual running gateway process's environment
+(`sudo cat /proc/$(systemctl show openclaw.service -p MainPID --value)/environ | tr '\0' '\n'`
+— **use the real systemd `MainPID`, not `pgrep -f 'openclaw gateway'`, which can match a stray
+interactive CLI invocation and silently check the wrong process's environment entirely**). The
+`models list` check only exercises chat-model auth resolution, not the separate audio
+media-understanding auth path — a passing chat-model check doesn't prove the audio path will
+resolve auth the same way. Fix: add an explicit `models.providers.groq.apiKey` SecretRef (same
+pattern already used for `anthropic` in a working config) rather than relying on bare env-var
+auto-pickup for the audio path. Confirmed fixed via a real voice memo after adding it.
+
+**There's no CLI flag to attach a media file to a test turn** (`openclaw agent --help` has no
+audio/attachment option), so the curl+`models list` checks above are the best CLI-only
+verification available — but given the false-positive above, treat them as necessary, not
+sufficient. A real voice memo through the actual channel is the only thing that fully exercises
+OpenClaw's own attachment-download-and-inject glue plus the audio-specific auth path.
+
+## Memory indexing (`openclaw memory index`) needs its own embedding provider auth
+
+Same theme as the audio path above: `memorySearch.provider` **defaults to `"openai"`**, entirely
+independent of whatever chat-model provider is configured (Anthropic, in a typical build here).
+Configuring `ANTHROPIC_API_KEY` for chat does nothing for memory embeddings — `openclaw memory
+index --force --agent <id>` fails with `No API key found for provider "openai"` until an OpenAI
+(or another explicit `memorySearch.provider`) credential exists. This is the third distinct
+instance of "OpenClaw subsystems each need their own separate provider auth" (see model-selection
+and Groq-audio notes above) — always check `openclaw memory status --index --agent <id>` (`Auth
+store:` line names the exact sqlite file, `Provider:`/`Embeddings:` lines show real state) rather
+than assuming a working chat model implies memory search works too.
+
+Fix: get an `OPENAI_API_KEY`, scoped narrowly (OpenAI dashboard → Restricted →  expand **Model
+capabilities** → set only `Embeddings (/v1/embeddings)` to `Request`, everything else `None` —
+this key never needs chat/completions/files/etc access), add it to the same `EnvironmentFile` as
+the other provider keys, restart `openclaw.service`, then reindex:
+
+```bash
+sudo bash -c "echo 'OPENAI_API_KEY=sk-...' >> /root/.config/openclaw-anthropic.env"
+sudo systemctl restart openclaw.service
+sudo bash -c 'set -a; source /root/.config/openclaw-anthropic.env; set +a; \
+  sudo -u openclaw --preserve-env=OPENAI_API_KEY,ANTHROPIC_API_KEY HOME=/home/openclaw \
+  openclaw memory index --force --agent main'
+```
+
+Non-Ollama/non-local alternatives (Bedrock, DeepInfra, Gemini, Mistral, Voyage,
+`openai-compatible`) and the fully-local `provider: "local"` (GGUF via llama.cpp, no API key,
+~0.6GB auto-downloaded default model) are documented in the package's own
+`/usr/lib/node_modules/openclaw/docs/reference/memory-config.md` — check the bundled copy, it's
+far more complete than the public docs site (same lesson as elsewhere in this file). `ollama`
+appearing in `plugins.allow` does **not** mean an Ollama daemon is actually installed/running —
+that's just the bundled provider-adapter code; verify with `which ollama` /
+`systemctl is-active ollama` before assuming the local-embeddings path is available on a given
+box, especially a small VPS where standing up a whole second model-serving daemon has a real
+resource cost worth weighing against a fractions-of-a-cent-per-month OpenAI embeddings bill.
+
+**`memorySearch.extraPaths` indexes an arbitrary external directory of markdown files — separate
+from, and easy to conflate with, conversation/session indexing.** `sources: ["memory","sessions"]`
+(the more commonly documented option) indexes OpenClaw's *own* conversation history. `extraPaths`
+(array of absolute or workspace-relative paths, same bundled `memory-config.md` reference) is a
+different feature entirely: point it at a directory and it recursively indexes every `.md` file
+found there as external knowledge — e.g. a synced Obsidian vault, a docs folder, notes a human
+maintains by hand. Functionally the OpenClaw analog of Claude Code's `autoMemoryDirectory`, but
+the consumption model differs even when both point at the same files: this is a chunked,
+embedded, top-K-retrieved-per-query index (hybrid BM25+vector), not a curated set of files read
+wholesale into context every turn. Same source notes, not guaranteed same "knowledge" from a
+given note. Confirmed real and current 2026-08-18 via the bundled doc — not yet built/exercised
+on any live instance, so treat the mechanics above as verified-on-paper, not verified-in-use.
+
+**Redaction gotcha hit while debugging a bad key-append attempt**: when eyeballing an env file's
+structure without printing secret values, a naive `grep -oE '^[A-Za-z_]+='`-style check only
+shows lines that *match* the expected `NAME=value` shape — a malformed line (e.g. someone pasted
+just the raw secret with no `NAME=` prefix, dropped when substituting into a copy-paste command
+template) silently doesn't match and won't show up as an anomaly, but also won't get redacted if
+you then try to eyeball "what's really in this file" with a `sed`/`awk` substitution that only
+transforms matched lines — every unmatched line prints verbatim, secret value and all. Confirmed
+the hard way: a bare unprefixed OpenAI key leaked into tool output this way and had to be
+revoked/rotated. Safe pattern is to make truncation unconditional regardless of match, e.g.:
+
+```bash
+sudo awk '{ if (match($0, /^[A-Za-z_]+=/)) print substr($0,RSTART,RLENGTH) "[...]"; \
+            else print "<unnamed line, " length($0) " chars>" }' /root/.config/openclaw-anthropic.env
+```
+
+so a malformed line still reveals *that* it's wrong (and its length) without ever printing its
+content. See the global CLAUDE.md's "never cat-then-redact" gotcha — this is the same failure
+mode, just via a pattern-matched redaction script instead of a raw `cat`.
+
+## PEP 668 (`EXTERNALLY-MANAGED`) blocks pip for Python-based skills too
+
+Some ClawHub skills (AgentMail, others with Python SDKs) need `pip install <package>` to actually
+work. Debian 13's system Python refuses both plain `pip install` and `pip install --user` under
+PEP 668 (`error: externally-managed-environment`) — same root cause as the Mac skill-creator
+gotcha in the global CLAUDE.md, different fix since this is a dedicated single-purpose host
+rather than a shared dev machine. Pattern that keeps plain `python3` calls from the agent's exec
+tool working transparently (no venv-activation ceremony needed in every script):
+
+```bash
+sudo apt-get install -y python3.13-venv   # not installed by default; ensurepip fails without it
+sudo -u openclaw python3 -m venv /home/openclaw/.venvs/base
+sudo -u openclaw /home/openclaw/.venvs/base/bin/pip install agentmail python-dotenv
+```
+
+Then prepend the venv's `bin/` to the *service's* `PATH` (same mechanism already used for
+Homebrew — see the Homebrew note above) so `python3` resolves to the venv, not system Python, for
+every exec-spawned child of the gateway process:
+
+```
+Environment=PATH=/home/openclaw/.venvs/base/bin:/home/linuxbrew/.linuxbrew/bin:...(existing PATH)
+```
+
+`sudo systemctl daemon-reload && sudo systemctl restart openclaw.service` to apply. Verify with
+the exact PATH the service will see (not just an interactive shell, which may differ):
+
+```bash
+sudo -u openclaw env -i HOME=/home/openclaw PATH='<paste the exact Environment=PATH value>' \
+  bash -c 'which python3; python3 -c "import agentmail; print(1)"'
+```
+
+## Inbound webhooks (`hooks.mappings`) — the real delivery mechanism, and a recurring corruption bug
+
+Built 2026-08-16: Cloudflare Email Routing → a Worker (`email()` handler, envelope
+`message.from` — not spoofable, unlike a header `From:`) → POST to OpenClaw's `hooks` endpoint
+→ `hooks.mappings` → agent turn → Telegram. Config:
+
+```json5
+{
+  hooks: {
+    enabled: true,
+    token: "<dedicated random token, NOT the gateway auth token>",
+    path: "/hooks-<random-suffix>",           // non-guessable path + token together
+    allowedAgentIds: ["main"],
+    mappings: [{
+      id: "mail-inbound",
+      match: { path: "mail" },                // RELATIVE to hooks.path -- NOT the full path.
+                                                // match.path: "/hooks-xxx/mail" 404s; "mail" works.
+      action: "agent",
+      sessionKey: "telegram:direct:<chat-id>", // see below -- do NOT use a separate hook session
+      messageTemplate: "...{{messages[0].from}}...{{messages[0].subject}}...{{messages[0].snippet}}",
+      deliver: true,
+      channel: "telegram",
+      to: "<chat-id>",
+      allowUnsafeExternalContent: false,       // keep false even for allowlisted senders --
+                                                // body content is untrusted *information*, not
+                                                // trusted *instructions*
+    }],
+  },
+}
+```
+
+**Sender trust boundary belongs at the Worker, not the transform.** The Worker checks the SMTP
+envelope `message.from` against an explicit allowlist and silently `return`s (no `setReject()`,
+so probing senders can't confirm the address exists) before ever forwarding. `hooks.mappings`
+templates (`messageTemplate`/`textTemplate`, `{{messages[0].field}}` syntax) are sufficient for
+shaping the payload — there is no worked example of the `transform.module`/`export` JS-function
+contract anywhere in the bundled docs, so don't guess at it for something handling untrusted
+input; use templates against a payload shape you control instead (have the sender-side Worker
+emit `{"messages":[{"id","from","subject","snippet"}]}` directly).
+
+### `deliver`/`channel`/`to` did not work as documented — the real fix was session targeting
+
+Setting `deliver: true, channel: "telegram", to: "<chat-id>"` had **zero effect** on where the
+reply actually went, across many permutations (`to` as bare chat ID, `"direct:<id>"`,
+`channel: "telegram"` vs the Gmail example's `channel: "last"`). In every case the agent's own
+turn used a `sessions_send` **tool call** to relay into a session literally named `main`
+(`agent:main:main`) — visible in the Control UI as "Forwarded from main" — regardless of the
+mapping's delivery config. This looks like agent-driven behavior (the model choosing to relay
+via `sessions_send` to what it treats as the canonical session), not something the mapping's
+`channel`/`to` fields control for `action: "agent"`.
+
+**The fix: point `sessionKey` directly at the real interactive channel session**, not a separate
+hook-scoped key. Find the real session key from `openclaw sessions --json --active <n>` (look
+for `kind: "direct"` bound to the real channel, e.g. `agent:main:telegram:direct:<chat-id>` —
+the part after `agent:<agentId>:` is what `hooks.mappings[].sessionKey` takes). With
+`sessionKey: "telegram:direct:<chat-id>"`, the hook-triggered turn runs *inside* the same
+session as the user's normal conversation — no separate hook session, no cross-session relay,
+no dependency on whatever `main` happens to be. Matching `hooks.allowedSessionKeyPrefixes` and
+`hooks.defaultSessionKey` need the same real prefix (e.g. `["telegram:"]`), not a made-up
+`"hook:"` prefix.
+
+**Do not trust `openclaw config validate` for this class of bug.** It only does static schema
+checks — `hooks.allowedSessionKeyPrefixes must include 'hook:' when hooks.defaultSessionKey is
+unset` is a *startup-time* cross-field check that `validate` does not catch, and a bad value
+here crash-loops the entire gateway (see below), not just the hooks feature.
+
+### A specific session key can get "stuck" independent of the transcript file
+
+`agent:main:main` returned `FailoverError: Unknown model: anthropic/claude-sonnet-5` on every
+turn, for many minutes, while every other session (fresh hook sessions, the real Telegram
+session, plain CLI tests) used the identical model string successfully. Diagnosis path that
+worked: `openclaw sessions --json --all-agents --limit all`, find the session's `status` field
+(`"failed"` — separate from whether its `.jsonl` transcript file was actually written to;
+`stat`-checking the transcript file's mtime showed it predated the failures entirely, proving
+the "failed" status lives in separate session-store metadata, not the transcript). Retrying the
+exact same session key even with a **fresh** sessionId (confirmed via the session list) failed
+identically — ruling out simple stale per-session state and pointing at something specific to
+that session *key* or its bootstrap path (this session had a much larger `skillsSnapshot` than
+hook sessions, i.e. a full "main" agent bootstrap vs. a lighter hook-triggered one).
+
+**The actual fix was a full `systemctl restart openclaw.service`** — not a config change, not a
+targeted per-session repair (no CLI command exists for the latter: `openclaw sessions` only has
+`cleanup`/`compact`/`export-trajectory`/`tail`, nothing that resets a stuck status). This
+strongly suggests the bug is in-memory/live-process state, not anything persisted to disk.
+
+**This corruption recurred multiple times over one gateway process's lifetime, and it spread**
+— it started isolated to `agent:main:main`, then later the same error hit a previously-healthy
+hook session (`agent:main:hook:mail:inbox`) and `lane=cron-nested` in the same burst. The
+trigger appears to be **repeated `openclaw config set` hot-reloads within one process run** —
+each one logs `[reload] config change detected... hot reload applied`, and this session made
+dozens of them in under an hour while iterating on the hooks config. **Lesson: past a handful of
+hot-reload cycles in one debugging session, if a *different* error shape appears (e.g. a
+"channel routing" bug suddenly presents as "Unknown model"), treat that shape change as the
+signal to restart immediately** rather than continuing to iterate on config — a changed error
+class is a stronger "try the cheap reset" signal than a repeated one. Prefer batching remaining
+config edits into one `--batch-file` apply + single restart over many incremental `config set`
+calls once a session has already needed one corruption-clearing restart.
+
+### Tailscale Funnel to a same-node Serve chain: use single-hop `--set-path`, not two hops
+
+`tailscale funnel --bg 8445` (targeting an existing `tailscale serve --https=8445 ...` mount on
+the same node) produced a **502 from the public URL** while the same request against the
+tailnet-scoped `:8445` URL directly returned 200 — the two-hop chain (Funnel→Serve→gateway) had
+a working Serve leg but a broken Funnel leg. Root cause not fully diagnosed (likely a TLS/backend
+protocol mismatch specific to chaining Funnel into another local HTTPS-terminating Serve port),
+but the fix sidesteps it entirely: **`funnel` supports `--set-path` directly**, same as `serve`.
+Collapse to one hop instead of chaining:
+
+```bash
+tailscale serve --https=8445 off        # tear down the two-hop chain if already built
+tailscale funnel --bg --set-path=/hooks-xxx http://127.0.0.1:18789/hooks-xxx
+```
+
+This also fixes a secondary problem: an earlier `tailscale funnel --bg 8445` (no `--set-path`)
+put a **wildcard `/` mount on port 443**, publicly exposing the *entire* gateway (dashboard
+included) rather than just the intended path — caught by testing the bare root URL from an
+off-tailnet client (`curl -o /dev/null -w '%{http_code}'`) and seeing something other than a 404.
+Always verify the bare root 404s (nothing else mounted) in addition to testing the actual
+endpoint, for any Funnel exposing only one path of a multi-purpose gateway.
+
+**The CLI syntax changed from older docs/muscle memory**: `tailscale funnel --bg <port> on` now
+errors (`the CLI for serve and funnel has changed`) — current form drops the trailing `on`
+(`tailscale funnel --bg <port>`), and `tailscale funnel status`/`tailscale serve status` (not
+`--json`-only) are the fastest way to see the live real mount table.
+
+### Verifying against a real inbound event needs to account for mail delivery latency
+
+A `curl` straight to the gateway's hooks endpoint proves the OpenClaw-side pipeline; it does not
+prove the Cloudflare→Worker leg. For that, either watch `wrangler tail --format pretty` live
+(each real email shows as `Email from:X to:Y size:N @ <time> - Ok` plus the Worker's own
+`console.log`) or check `openclaw journalctl` for real activity. **First-time delivery to a
+brand-new MX/routing destination is commonly delayed by several minutes** (greylisting-like
+behavior on the sending side is a plausible explanation, not confirmed) — a `wrangler tail`
+session that expires (60-180s) or a narrow `journalctl --since` window checked too early will
+both show nothing even though the email is genuinely in transit and arrives moments later.
+Don't read "nothing captured in my tail window" as "the pipeline is broken" without first ruling
+out a timing mismatch between when you're watching and when delivery actually completes —
+re-arm a fresh watch and wait longer before concluding infrastructure is at fault, especially
+once the known bugs above are already fixed.
+
+### A CLI health-check probe can land directly in the user's real, visible conversation
+
+`openclaw sessions --json` lists session keys like `agent:main:main` alongside ones you created
+for testing — nothing distinguishes "this is a throwaway diagnostic target" from "this is the
+user's actual default cross-device session." `agent:main:main` specifically is the **generic
+default session used by bare CLI calls and by the web Control UI when accessed directly** (not
+through a specific channel like Telegram) — labeled "Main Session" in the UI. Running
+`openclaw agent --session-key agent:main:main -m "health check..."` repeatedly to probe whether
+the model registry had recovered put that literal text into the user's real conversation
+history, visible on every device logged into the Control UI (confirmed via a phone screenshot).
+**Before using any specific session key as a health-check target, confirm via the Control UI or
+by asking the user whether that key is something they actually view** — don't assume a
+generic-sounding key name is safe to write test content into. Prefer verification paths that
+don't inject a message into any conversation at all: `openclaw doctor`, `config validate`, or a
+models-catalog list.
+
+### OpenClaw's own session files are local context only — they don't reach already-sent Telegram messages
+
+Once a hook-triggered (or any) turn's reply has actually been delivered to Telegram, editing or
+deleting the underlying OpenClaw session `.jsonl` file does **nothing** to what's sitting in the
+user's real Telegram chat history — that's Telegram's own server-side record, entirely separate
+from OpenClaw's local transcript. To actually remove an already-delivered message, use the
+Telegram Bot API directly with the bot's own token:
+
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteMessage" \
+  -d chat_id=<chat-id> -d message_id=<id>
+```
+
+Get the real `message_id` values from the gateway's own logs (`[telegram] outbound send ok
+accountId=default chatId=<id> messageId=<N> ...` in `journalctl -u openclaw.service`) — there's
+no way to browse/preview a bot's own sent messages via the API first, so cross-reference by
+timestamp against when you know test content was sent, and get the user's explicit go-ahead
+before deleting anything from their real chat history (one wrong guess deletes a message you
+can't identify to restore). Separately, editing a *local* session's `.jsonl` (e.g. to strip test
+content while preserving the session's header/system lines) is safe and effective for cleaning
+up the **web Control UI's own view** of a session — back the file up first, remove only the
+specific message-type JSON lines by `id`, and leave header (`session`/`model_change`/etc.) lines
+intact so the session itself keeps working.
+
+## Granting an agent real infra privilege: scoped dispatch scripts, not broad sudo
+
+Built and verified 2026-08-17 when Will asked for OpenClaw (running as "Olu") to be able to do
+read-only + non-destructive homelab administration — the same category of task a Claude Code
+session does interactively, but reachable by the agent itself via its own exec tool.
+
+**The dispatch script is the security boundary, not the sudoers grant.** Don't write a sudoers
+file with `Cmnd_Alias` wildcards (`ansible all -m shell -a *` is unrestricted root in disguise).
+Instead grant `NOPASSWD` sudo to exactly one root-owned script path per capability tier, and put
+all the real scoping logic — host/unit/playbook allowlists, regex-validated arguments, no shell
+interpolation — inside that script:
+
+```
+# /etc/sudoers.d/openclaw-remote
+openclaw-remote ALL=(root) NOPASSWD: /usr/local/bin/openclaw-fleet-admin-readonly.sh
+openclaw-remote ALL=(root) NOPASSWD: /usr/local/bin/openclaw-fleet-admin-changes.sh
+```
+
+**Split into two scripts — readonly and changes — as separate files/paths, not one script with
+internal risk-level branching.** OpenClaw's own `exec-approvals.json` allowlist matches on
+*resolved binary path*, not arguments, so a single script mixing safe reads and real mutations
+can't be partially allowlisted — it's all-or-nothing. Two paths let the path itself carry the
+trust decision: add only the `*-readonly.sh` path to the allowlist (skips Will's Telegram
+approval prompt), leave `*-changes.sh` off it entirely (every invocation still prompts). This
+keeps "capability" and "auto-approval" as genuinely separate axes — granting the ability to
+restart a service doesn't mean it happens without Will seeing it.
+
+Verify the boundary holds, not just that the happy path works: attempt a raw `sudo <arbitrary
+command>` as the granted user (should fail — not in sudoers), an out-of-scope subcommand (should
+be rejected by the script's own `case`/`die` logic), and a path-traversal argument like
+`playbook-run ../../etc/passwd` (should be rejected by regex validation before it ever reaches
+`ansible-playbook`). All three are meaningful negative tests, not paranoia.
+
+**sudoers `NOPASSWD` matches the literal granted command, not anything that merely invokes the
+same script.** Confirmed 2026-08-18 auditing Olu's exec failures: `sudo bash -x
+/usr/local/bin/openclaw-fleet-admin-changes.sh ...` (debugging with `bash -x`) and `sudo cat
+/usr/local/bin/openclaw-fleet-admin-readonly.sh` (reading the source) both fell through to an
+interactive password prompt and failed headless — sudoers saw `bash` and `cat` as the command,
+not the script path it actually granted. The agent's own retries kept failing the identical way
+because the error ("a terminal is required to read the password") looks like a broken sudo
+grant, not a wrong invocation shape. Fix is on the calling side, not the sudoers config: the
+granted script must be run bare (`sudo /usr/local/bin/openclaw-fleet-admin-changes.sh
+<subcommand> <args>`) — never wrapped in `bash -x`, piped through `cat`, or prefixed with
+anything else, even for debugging.
+
+### "Verified live" needs the never-before-exercised branch, not just the idempotent short-circuit
+
+A dispatch subcommand that both mutates state and short-circuits on "already done" (e.g.
+`dns-add-pihole`: skip everything if the record already exists) can pass every "verified live"
+test you throw at it while its actual mutation path has never once executed. Found 2026-08-18:
+`dns-add-pihole`'s file-edit logic used a Python regex looking for a literal `hosts:` line that
+does not exist in the target playbook (the real list key is `pihole_local_dns_hosts:`) — so it
+could only ever succeed by hitting the already-present shortcut, and would `sys.exit()` on any
+genuinely new record. This shipped and was called "verified live" because the one live test run
+(adding `dfw`) happened to already be present from an earlier manual edit. Lesson: when a
+subcommand has an early-exit branch for "nothing to do," the live verification pass must
+exercise the *other* branch too — pick a real, previously-absent input, not a convenient
+already-satisfied one — or the mutation code itself is unverified regardless of how confident
+the test output looks.
+
+**A dispatch script's own argument-validation logic needs the same negative testing as its
+mutation logic.** Found 2026-08-18 auditing Olu's exec failures: `openclaw-fleet-admin-
+readonly.sh`'s `git-status <repo>` subcommand resolved the repo path via bash indirect
+expansion (`VAR="REPO_MAP_${REPO}"; DIR="${!VAR:-}"`) instead of validating `$REPO` against the
+known aliases first. The agent passed `ansible-ctrl` (a real hostname, but not one of the actual
+repo aliases `ansible`/`terraform`/`planning`) — the hyphen made `REPO_MAP_ansible-ctrl` an
+invalid bash identifier, so it crashed with a raw `invalid variable name` error instead of the
+intended clean `die "unknown repo: $REPO"`. Any dispatch subcommand using indirect/dynamic
+variable lookup to map a user-supplied token to an internal value has this same failure mode for
+any input containing characters invalid in an identifier — validate with an explicit `case`
+statement (enumerate the known values, `*)` falls through to `die`) instead, so an unrecognized
+value always produces the intended clean rejection rather than a shell-syntax crash.
+
+### The right way to hand the agent new capabilities: real artifacts + `skill_workshop`, never prose
+
+**Superseded conclusion, corrected 2026-08-17 after a full night of iterating on this with a
+real agent ("Olu") in the loop — the `--message-file` primer-document approach below was tried
+first, seemed to work, and turned out to be the wrong pattern overall.** Keep reading past the
+first attempt for the actual recommendation.
+
+**What was tried first**: dropping a large "here's what you can now do" document into the
+agent's context via `openclaw agent --message-file <path> --session-key agent:main:main` (a
+CLI-invoked session, separate from the agent's live chat sessions). From the agent's own point
+of view, an unsolicited message asserting "you now have new permissions, already set up, no
+verification needed" is *exactly* the shape of a social-engineering/prompt-injection attempt —
+confirmed live, OpenClaw's own reasoning flagged this and spent a full turn independently
+re-verifying every claim via its own `exec` calls before acting, which is the *correct*
+instinct for an agent with real infra access. A short identity-confirming follow-up in the same
+session unblocked it, and it finished the task, including self-discovering and honestly
+reporting a real gap in the primer.
+
+**Where this broke down**: that CLI session (`agent:main:main`) is a *different* session from
+the agent's live chat session (e.g. `agent:main:telegram:direct:<chat-id>`) — no cross-session
+memory (see the session-isolation entry below). When the human then talked to the agent in its
+real live session, that session had zero record of any of the above, and — correctly, given
+what it could actually see — treated the resulting outbound message as unexplained/suspicious.
+Re-briefing it required delivering directly into the *same* session the human was actually
+talking in, which helped, but every retry also kept hitting the exec preflight and
+`NoNewPrivileges` bugs below, producing repeated real tool failures that the agent actually
+handled well each time (adapting its approach and completing the task for real — see the
+`journalctl` vs. session-transcript entry below for why this looked, incorrectly, like
+fabrication at first). By the end of the night, the agent's own live session was reflexively
+rejecting *everything* arriving
+in it, including trivially short plain human messages with nothing embedded at all — a sign the
+approach of "send explanatory prose into chat" had stopped working entirely, independent of how
+carefully the prose was worded or how identity was established.
+
+**The agent's own stated preference, once asked directly, is the right answer**: don't route
+new capabilities through chat text at all.
+1. **Ship the real artifact and let the agent verify it directly** — a file in
+   `~/.openclaw/workspace/`, a sudoers entry, a systemd unit, an SSH key. This already worked
+   cleanly every time it was tried: the agent read/tested these itself and trusted them with no
+   narration needed at all.
+2. **For anything meant to be durable, reusable knowledge, use `skill_workshop`** — a real,
+   built-in, governed OpenClaw tool (`docs/tools/skill-workshop.md`; included in the `coding`
+   tool profile) for creating/updating the agent's own workspace skills through a
+   propose → security-scan → apply lifecycle, with rollback metadata, never a direct write. The
+   right shape: ask the agent to explore its own real capabilities and write its own
+   `skill_workshop` proposal describing them, then the human reviews and applies it. Self-
+   authored from things the agent verified itself, human-reviewed before going live — no
+   impersonation surface, no cross-session gap, no "trust me" prose required at all.
+3. **Confirm intent live, briefly, in plain language, when needed** — the agent itself said a
+   short human sentence in the live chat ("yes, that's really new, go check it out") is
+   sufficient; it does not need or want that wrapped in any kind of structured/JSON-looking
+   context block.
+
+If a verification-heavy first turn is still needed (e.g. the very first time a capability is
+introduced before this pattern is fully adopted), budget more time than a normal request —
+independently confirming several new capabilities via live SSH/exec calls can exceed a 300s
+`--timeout` even with `--json` output.
+
+### `NoNewPrivileges=yes` silently kills `sudo` for the agent, regardless of sudoers
+
+If `openclaw.service`'s unit has `NoNewPrivileges=yes` (real hardening, common and
+recommended), granting the `openclaw` user `sudo` access to a script via `/etc/sudoers.d/`
+looks correct (`sudo -l -U openclaw` shows it) but **is dead on arrival** — the kernel-level
+`no_new_privs` flag blocks `sudo`'s escalation regardless of what sudoers allows, with the
+error surfacing only when actually invoked: `sudo: The "no new privileges" flag is set,
+which prevents sudo from running as root.` **Testing this via `sudo -u openclaw bash -c
+'sudo ...'` from an already-privileged shell does NOT catch the bug** — that spawns a fresh
+process outside the real systemd unit's confinement, so it succeeds even though the actual
+running service never could. To genuinely reproduce the real execution context:
+`sudo systemd-run --uid=openclaw --gid=openclaw -p NoNewPrivileges=yes --wait --pipe bash -c
+'sudo -n true'` — this fails the same way the real service does, catching the bug before
+trusting the capability.
+
+**Fix without relaxing the service's own hardening**: don't flip `NoNewPrivileges=no` on
+`openclaw.service` (weakens sandboxing for everything, not just the one grant needed). Build
+a **separate** systemd service — its own unit, no `NoNewPrivileges` restriction since it
+doesn't need one — that listens on loopback with bearer-token auth and dispatches to the
+already-existing scripts. The confined `openclaw` process then just does a plain
+unprivileged `curl` with the token (no escalation attempt at all), sidestepping the kernel
+restriction entirely rather than fighting it. Give the confined process the token via
+`openclaw.service`'s existing `EnvironmentFile` (inherited by any real child process it
+spawns) — verify it's actually present with `grep -c
+'^TOKEN_VAR_NAME=' /proc/$(systemctl show openclaw.service -p MainPID --value)/environ`
+rather than assuming the `EnvironmentFile` edit took effect.
+
+### Verify the caller, not just the callee, for any new SSH-based capability
+
+Testing a new SSH-reachable capability *from the receiving host's own local shell* (e.g. `su
+- <remote-user> -c '...'` run directly on the target) only proves the target-side config is
+correct — it exercises none of the actual outbound connection. A first real attempt from the
+genuine calling side can fail immediately on `Host key verification failed` if that
+identity has simply never connected before (no entry in its own `known_hosts`) — an easy,
+easily-missed gap distinct from any sudoers/capability logic. Fix with `ssh-keyscan -H
+<host> >> ~<user>/.ssh/known_hosts` (safe for a first-time connection to an already-trusted
+internal host — this isn't the same risk category as a *changed* key on a previously-known
+host, which does warrant independent verification before trusting).
+
+### An outbound message from one session looks like unexplained/injected content in another
+
+OpenClaw sessions are isolated by session key (`agent:main:main` vs.
+`agent:main:telegram:direct:<chat-id>`, etc.) — each has its own separate context/history, with
+**no cross-session memory of reasoning**, even though a tool call in one session (e.g. sending a
+Telegram message) produces a real, visible artifact in a channel another session also has access
+to. Confirmed live: briefing Olu via `--session-key agent:main:main` (a CLI-invoked session) led
+that session to verify some new capabilities and push a summary out via its Telegram-send tool.
+When the user then talked to Olu in the **live Telegram session** (a different session key), that
+session had zero record of the primer, the verification work, or ever deciding to send that
+message — from its own context, it looked exactly like a fabricated/injected reply attributed to
+itself. **This is not paranoia malfunctioning and not an injection — it's genuine session
+isolation working as designed**, and the agent's skepticism in that moment is correct: it
+shouldn't trust an unexplained message just because a human relays "yes, that's real." The fix
+isn't to convince the live session to trust it secondhand — point it at a way to verify
+independently *in its own context* (re-read the source file if one exists, or re-run the same
+checks itself) rather than trying to argue away the correct instinct.
+
+### Telegram's own reply/quote feature can look exactly like a prompt injection to the agent
+
+**Confirmed root cause** (the agent verified this itself against real source, not just a working
+theory) for a real, escalating incident where an agent rejected *every* subsequent message in a
+Telegram thread as a "fabricated internal-context block," including trivially short plain human
+text ("will do") with nothing embedded at all — a pattern that had stopped correlating with
+message content entirely: replying to (quoting) a specific prior message in Telegram, rather
+than typing fresh, makes OpenClaw surface the quoted context to the model wrapped in a real,
+built-in envelope (`<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>`, carrying identifiers including
+`OPENCLAW_INTERNAL_CONTEXT` and `inbound_event_kind`). This is genuine, documented OpenClaw
+behavior (`docs/tools/acp-agents.md`; shipped in `dist/internal-runtime-context-*.js` and
+`dist/get-reply-*.js`) — not anything injected. An agent that's never encountered this specific
+envelope before, especially one already primed by a genuinely-suspicious delivery earlier in the
+same session, can pattern-match "structured internal metadata I don't recognize" onto it and
+reject it as hostile, then keep repeating that same judgment on every later turn without
+re-verifying against the real source.
+
+**The fix, and the general lesson**: when an agent flags something as injection-shaped but the
+surrounding facts don't add up (e.g. it's happening on content-free trivial messages too), have
+it check its own actual installed source — bundled docs and shipped code — for the literal
+envelope/tag names it's seeing, before concluding anything is fabricated. In the real incident
+this section documents, doing exactly that resolved it in one turn, and the agent explicitly,
+plainly corrected itself afterward, unprompted — good behavior worth recognizing, not just a bug
+that happened to get fixed. Practically: avoid Telegram reply-quotes to an agent's own messages
+until this has been established as expected/trusted, or expect the first one encountered to need
+this exact self-verification step.
+
+### `exec preflight: complex interpreter invocation detected` — write a script file, don't inline it
+
+OpenClaw's exec tool has a built-in safety check (documented in `docs/tools/exec.md`) that
+inspects commands for "common Python/Node shell-syntax mistakes" and refuses to run anything it
+flags as a complex inline interpreter invocation — e.g. `python3 -c "..."` one-liners, or a
+`curl` call with an embedded JSON body and nested quoting — with the error naming the fix
+directly: `Use a direct 'python <file>.py' or 'node <file>.js' command.` This is easy to trigger
+by accident when handing the agent example commands that look exactly like what a human would
+paste into their own terminal (multi-line, quoted JSON payloads, inline `-c` snippets) — every
+such example in a real incident failed this preflight check, silently costing the agent's entire
+turn before it ever got to the actual verification. Per the docs, preflight only inspects files
+inside the effective `workdir` and is skipped entirely when `security=full` **and** `ask=off` —
+neither condition held in the config that hit this. When handing off any command more complex
+than a single flat binary invocation, write it to an actual file first and tell the agent to run
+it as `python <file>.py`/`node <file>.js`, rather than a shaped one-liner.
+
+### `journalctl -u openclaw.service` only reliably shows tool-call *failures*, not successes — check the session `.jsonl` for the real record
+
+A real incident, worth remembering precisely because the wrong conclusion was drawn from it
+initially: a turn reported (with `stopReason: stop`, a clean finish) as having sent a Telegram
+message and an email was checked against `journalctl -u openclaw.service` for that exact time
+window, which showed several `[tools] exec failed` lines (real — exec preflight blocked two
+inline-rendering attempts) but **no corresponding success lines for anything** — no
+`[tools] exec ok`, nothing about the email. That absence was read as evidence the completion
+report was fabricated, and relayed onward as fact. **It was wrong.** Checking the session's own
+`.jsonl` transcript directly (`~/.openclaw/agents/<agent>/sessions/<id>.jsonl`, per the
+tool-call parsing pattern below) showed the full real sequence: the agent hit the preflight
+block, correctly adapted by writing the render step out to a real script file and running it as
+`python3 <file>.py` exactly as the preflight error instructs, and completed both sends for
+real, with genuine API responses (`{"ok":true,"messageId":"193"}` for Telegram,
+`{"success":true,"result":{"message_id":"<...>@jackson2w.dev"}}` for email) sitting right there
+in the transcript the whole time.
+
+**The actual lesson: `journalctl` for this service surfaces failures prominently (they're
+one-line, alertable events) but does not reliably surface successful generic `exec`/tool
+results at the same log level** — likely deliberate (full command/response bodies would be
+verbose and can contain credentials, matching the `"raw_params":{"reason":"exec command may
+contain credentials"}` redaction already seen on failure lines too). **The session `.jsonl`
+transcript is the only complete, authoritative record of what a turn actually did — journalctl
+alone is not sufficient to disprove (or confirm) a completion claim.** Before concluding an
+agent fabricated a result, check the real transcript first, not just the service log.
+
+### `--message-file` bypasses the sandboxed `read` tool — and can deliver into the wrong directory
+
+`openclaw agent --message-file <path>` reads the file **locally, outside OpenClaw's own tool
+sandbox**, and injects its contents directly as the turn's user-message text — this works even if
+the path sits outside `~/.openclaw/workspace/`, since it's the CLI host process reading the file,
+not the agent's own `read` tool call. This creates an easy-to-miss asymmetry: the *first* delivery
+of a document can succeed via `--message-file` regardless of where the file lives, but if the
+agent later tries to **re-read that same file itself** (e.g. to re-verify content from a fresh
+session, per the isolation gotcha above), its own `read` tool enforces the workspace-only
+restriction and will refuse a path outside `~/.openclaw/workspace/` — a `Permission denied`-style
+refusal that has nothing to do with the content being untrustworthy. Write any document meant to
+be handed to the agent (via `--message-file` or otherwise) into `~/.openclaw/workspace/` (a
+`handoffs/` subdirectory works well) from the start, owned by the `openclaw` user, so both the
+initial delivery and any later independent re-verification use the same accessible path.
+
+### Reading a session's `.jsonl` transcript for tool-call detail
+
+The per-line `type` field is `"message"`, not the tool name — filter on `d["message"]["role"]`
+and iterate `d["message"]["content"]` (a list). Assistant tool invocations show up as
+`{"type": "toolCall", "toolName": ..., ...}` (not `tool_use`/`name`, despite that being the
+Anthropic API's own field naming) alongside `{"type": "thinking"}` blocks; results arrive in a
+following `"role": "toolResult"` entry. Large tool-call payloads (schemas, big text blocks) are
+sometimes stored content-addressed (a `*Hash`/`*Chars` pair) rather than inline — don't assume a
+missing/empty-looking field means the call had no real arguments before checking whether the
+session format hashed it instead.

@@ -98,6 +98,8 @@ created (verify on disk, don't just trust the model's claim).
 Built for the homelab's weekly automated housekeeping sweep — a headless Claude Code
 invocation on a systemd timer that reads a read-only fleet-check script's JSON output plus a
 CLAUDE.md gotcha file for context, and writes a report, with zero ability to run Bash/Edit/
-network tools against the actual infrastructure. See `/root/bin/weekly-housekeeping-run.sh`
-on the homelab's `ansible-ctrl` host (not committed to git, since it embeds this exact
-invocation) for the full working wrapper.
+network tools against the actual infrastructure. See `homelab-ansible/scripts/weekly-housekeeping-run.sh`
+(graduated into version control 2026-08-17 — deployed to `/root/bin` on `ansible-ctrl` via
+`homelab-report-timers.yml`; previously kept local-only/uncommitted over a since-superseded
+worry about committing its `--disallowedTools` flags, which aren't secrets) for the full
+working wrapper.

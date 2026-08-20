@@ -197,3 +197,20 @@ decommissioned guest (or explicitly note you're keeping them and for how long)" 
 decommission checklist you're following, alongside the already-standard Prometheus/Homepage/
 Pi-hole-DNS/Tailscale-device cleanup steps. Run GC (above) afterward to actually reclaim the
 freed chunks.
+
+**Checking whether a group exists at all doesn't need a token.** Before minting a temp
+DatastoreAdmin token just to *check*, it's simpler to look at the datastore's own directory
+layout directly (root SSH to the PBS host is enough — no API, no token):
+
+```bash
+ssh pbs "find /<datastore-path>/vm /<datastore-path>/ct -maxdepth 1 -mindepth 1 -type d"
+# e.g. /mnt/pbs-datastore/vm/145, /mnt/pbs-datastore/ct/101 -- the trailing number is the vmid
+```
+
+Each backup group is just a `vm/<vmid>` or `ct/<vmid>` directory — `grep` the output for the
+vmid you care about. Reserve the token-minting dance above for the actual delete, once you've
+confirmed via this read-only check that there's something to delete. Used this in
+`homelab-ansible/scripts/decommission-touchpoint-check.sh` (see the homelab's
+`project_ansible_graduation_catalog` memory) — also where a variable named `GROUPS` turned out
+to silently misbehave (it's a bash built-in special variable, an array of the process's Unix
+groups); name it something else.
