@@ -78,9 +78,9 @@ of rendering the authored dark palette:
 <meta name="supported-color-schemes" content="light dark">
 ```
 
-## The three implementations — no shared renderer across runtimes
+## The four implementations — no shared renderer across runtimes
 
-Same design language, three separate hand-written implementations, because nothing here can
+Same design language, four separate hand-written implementations, because nothing here can
 share code across the runtimes/hosts involved:
 
 1. **`/usr/local/bin/render-ledger-email.py`** on `dfw` (Python, world-readable/executable —
@@ -104,6 +104,12 @@ share code across the runtimes/hosts involved:
    `homelab-terminal-report-delivery` skill for that schema's full contract.
    `render_markdown()` in this same file is untouched by any of this — markdown has no visual
    style to change, verify any future edit here doesn't touch it (diff before/after).
+4. **`backup-worker/src/render-terminal-report.js`** in the `photo-site` repo (JS, Cloudflare
+   Worker). A hand-maintained JS port of #3 — same schema, same visual output, kept in
+   lockstep manually since there's no shared code across the Python/JS runtime boundary. Was
+   still on the old Kanagawa Wave design until 2026-08-20 (missed by the 2026-08-17 fleet
+   restyle since it isn't deployed via `homelab-ansible` and nothing sweeps this repo). If #3's
+   markup changes, port the change here too — don't let it drift again.
 
 If a *new* consumer needs this styling: reuse #1's schema directly if the content is simple
 (a title, maybe a status callout, a few prose/data sections); reuse #3's schema if it needs
@@ -130,7 +136,9 @@ that the `curl` call didn't error (see Verification below).
 
 The invisible-dark-text bug above was caught by **actually rendering and screenshotting the
 output**, not by reading the CSS and reasoning it should work. Before shipping any change to
-one of the three implementations:
+one of the four implementations (for #4, run the JS renderer under plain `node` against a
+sample JSON payload to get an HTML file to screenshot — no Worker deploy needed just to check
+rendering):
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
