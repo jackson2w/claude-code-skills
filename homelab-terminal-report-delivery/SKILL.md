@@ -1,6 +1,6 @@
 ---
 name: homelab-terminal-report-delivery
-description: This skill should be used when building or modifying a homelab automation that needs to deliver a status report via email + Telegram + (optionally) a GitHub-hosted markdown archive — the shared Kanagawa-Wave-terminal-styled report system already used by the weekly housekeeping sweep, the nightly backup summary, and the R2 offsite sync email. Trigger phrases include "homelab status report", "kanagawa wave email", "render-terminal-report", "homelab-report-lib", "consolidate emails into a digest", "add a new homelab report automation", "ghostty styled email report", "claude_code_prompts schema", "push report to obsidian-vault", "deploy report script to a host other than ansible-ctrl", "raw ISO timestamp in email/telegram", "human readable local time in report".
+description: This skill should be used when building or modifying a homelab automation that needs to deliver a status report via email + Telegram + (optionally) a GitHub-hosted markdown archive — the shared report system (resilience-ledger-styled HTML as of 2026-08-17, previously Kanagawa-Wave-terminal-styled) already used by the weekly housekeeping sweep, the nightly backup summary, and the R2/B2 offsite sync emails. Also covers choosing between a minimal-link Telegram ping and a rich bulleted Telegram-as-primary-channel with conditional email (added 2026-08-20 to cut Postmark's 100/month free-tier quota). Trigger phrases include "homelab status report", "ledger styled email", "kanagawa wave email", "render-terminal-report", "homelab-report-lib", "consolidate emails into a digest", "add a new homelab report automation", "resilience-ledger design system", "claude_code_prompts schema", "push report to obsidian-vault", "deploy report script to a host other than ansible-ctrl", "raw ISO timestamp in email/telegram", "human readable local time in report", "send_rich_telegram_report", "postmark quota", "postmark free tier limit", "telegram primary channel", "bulleted telegram summary", "only email on warn or fail".
 ---
 
 # Homelab terminal-report delivery system
@@ -15,20 +15,45 @@ The first two run from `ansible-ctrl`; the R2 sync report runs locally on `pbs` 
 
 ## What it looks like
 
-Email renders as a Kanagawa Wave-palette terminal window (matches Will's real Ghostty config —
-theme "Kanagawa Wave", font "Maple Mono NF") with a macOS-style titlebar, a colored BLUF panel
-(`[ OK ]`/`[WARN]`/`[FAIL]` bracket tags, not emoji — they don't grid-align in monospace),
-per-category findings, and a "Follow-ups" section at the bottom with one numbered, pasteable
-Claude Code prompt per actionable issue. Subject line and Telegram message both read
-`❯ <report-name> MM/DD/YY`, mirroring the email's own opening prompt line (an earlier version
-read `❯ <report-name> --date MM/DD/YY` — the `--date` was dropped 2026-07-20 as pure noise, Will
-found it confusing rather than informative; don't reintroduce it). Telegram is deliberately
-minimal (that line + the GitHub report link, nothing else) — full detail lives in the email and
-the linked report. **Any timestamp shown to Will (BLUF text, Telegram, follow-up prompts) must be
-a human-readable local time** (`TZ='America/Chicago' date -d "@$EPOCH" '+%-I:%M %p %Z'` →
-`6:27 AM CDT`), never a raw UTC ISO-8601 string (`2026-07-20T11:13:56Z`) — Will explicitly called
-this out as unreadable when the R2 sync report first shipped with it. Keep the epoch/ISO value
-around internally for duration math or log-grepping if needed, but never surface it directly.
+**Updated 2026-08-17**: the email HTML is now styled with the **resilience-ledger design
+system** (warm-paper/dark-ink "systems report" look — see
+`~/Desktop/resilience-ledger-design-system/` and `project_dfw_vultr_buildout` memory for the
+full design-token detail), not the earlier Kanagawa Wave terminal-window chrome. This was a
+**visual-only swap of `render_html()`** in `render-terminal-report.py` — the JSON schema below,
+the CLI interface, `render_markdown()`, and every calling orchestrator are all byte-for-byte
+unchanged (verified via diff before/after deploying). A colored callout box carries the BLUF
+(`OK`/`WARN`/`FAIL` label + tinted background, not emoji), each category renders as a list of
+status-pill + headline + optional detail rows, and a "Follow-ups" section at the bottom has one
+numbered, pasteable Claude Code prompt per actionable issue in a monospace card. Light mode is
+now the default with a proper dark media-query companion (the old version was dark-only).
+Subject line reads `❯ <report-name> MM/DD/YY`, mirroring the email's own opening prompt line
+(an earlier version read `❯ <report-name> --date MM/DD/YY` — the `--date` was dropped
+2026-07-20 as pure noise, Will found it confusing rather than informative; don't reintroduce
+it) — that convention lives in each orchestrator script, not in the renderer, and was
+deliberately left untouched by the 2026-08-17 restyle. **Any timestamp shown to Will (BLUF
+text, Telegram, follow-up prompts) must be a human-readable local time**
+(`TZ='America/Chicago' date -d "@$EPOCH" '+%-I:%M %p %Z'` → `6:27 AM CDT`), never a raw UTC
+ISO-8601 string (`2026-07-20T11:13:56Z`) — Will explicitly called this out as unreadable when
+the R2 sync report first shipped with it. Keep the epoch/ISO value around internally for
+duration math or log-grepping if needed, but never surface it directly.
+
+**Telegram: minimal-link vs. rich-primary, pick one per report (updated 2026-08-20).**
+Two established patterns now, not one:
+- **Minimal-link** (weekly housekeeping, and the default for anything new): just the subject
+  line + the GitHub archive link (`send_telegram`), full detail lives in the email. Right fit
+  when the report is low-frequency and/or dense enough that email is genuinely the primary
+  read — the whole point is not duplicating a big report into a phone notification.
+- **Rich-primary** (`nightly-backups`, `r2-offsite-backup`, `b2-offsite-backup`, all switched
+  2026-08-20): `send_rich_telegram_report <json_file> <subject> <report_url>` (new in the shared
+  lib) builds a bulleted, scannable message straight from the same `bluf` +
+  `categories[].items[]` JSON as the email, one blank line between bullets. Paired with making
+  Postmark **conditional** — only call `send_postmark_email` when `overall_status != "ok"` —
+  since this was driven by Postmark's 100/month free-tier cap (see
+  `project_postmark_telegram_quota_shift` memory for the real numbers that motivated it). Right
+  fit for daily-cadence, usually-`ok`, no-action-needed-on-a-good-day reports. On `warn`/`fail`
+  both channels still fire, same as before this change. Don't reach for rich-primary by default
+  — it only makes sense once Postmark volume (or phone-notification noise) is an actual
+  problem; minimal-link is still the right starting point for a brand-new report.
 
 ## The pieces
 
@@ -48,7 +73,15 @@ that run from `ansible-ctrl` itself, or to wherever the automation actually runs
   footer line is omitted entirely when `report_url` is empty, rather than showing a misleading
   fallback string; don't reintroduce placeholder text there).
 - **`lib/homelab-report-lib.sh`** — shared bash functions, sourced by every orchestrator script:
-  `send_telegram`, `html_escape` (Telegram `parse_mode=HTML` needs `&`/`<`/`>` escaped), `send_postmark_email` (builds the `HtmlBody`+`TextBody` JSON payload via `jq`, posts to Postmark's API), and `push_report_to_vault <local_md_file> <slug.md> <commit_message>` (commits+pushes into the `obsidian-vault` repo root, prints the GitHub blob URL to stdout, or an empty string on failure — treat empty as "no link available," never as a hard error, matching the report-only never-block-a-delivery-channel posture).
+  `send_telegram`, `html_escape` (Telegram `parse_mode=HTML` needs `&`/`<`/`>` escaped),
+  `send_rich_telegram_report <json_file> <subject> <report_url>` (added 2026-08-20 — builds the
+  bulleted rich-primary message described above from the same JSON as email; see that section
+  for when to use it vs. plain `send_telegram`), `send_postmark_email` (builds the
+  `HtmlBody`+`TextBody` JSON payload via `jq`, posts to Postmark's API), and
+  `push_report_to_vault <local_md_file> <slug.md> <commit_message>` (commits+pushes into the
+  `obsidian-vault` repo root, prints the GitHub blob URL to stdout, or an empty string on
+  failure — treat empty as "no link available," never as a hard error, matching the
+  report-only never-block-a-delivery-channel posture).
 - **The JSON schema** every report is built from:
   ```json
   {
@@ -80,9 +113,11 @@ that run from `ansible-ctrl` itself, or to wherever the automation actually runs
    deterministic template to copy; the weekly sweep is the judgment-step template to copy.
 2. Write an orchestrator script (`source` the lib, run the checks, build/receive the JSON,
    validate it with `jq empty`, render markdown → push to vault → get URL → render HTML with that
-   URL → send Telegram (`❯ <name> MM/DD/YY` + link) → send Postmark (`HtmlBody`+`TextBody`,
-   subject `❯ <name> MM/DD/YY`)). `set -uo pipefail`, **not** `-e` — a failed delivery
-   channel must not block the others. **Not every report needs the vault push** — the R2 offsite
+   URL → send Telegram (minimal `send_telegram` + link, or rich `send_rich_telegram_report` —
+   see "Telegram: minimal-link vs. rich-primary" above) → send Postmark (`HtmlBody`+`TextBody`,
+   subject `❯ <name> MM/DD/YY`, unconditionally for minimal-link reports or gated on
+   `overall_status != "ok"` for rich-primary ones)). `set -uo pipefail`, **not** `-e` — a failed
+   delivery channel must not block the others. **Not every report needs the vault push** — the R2 offsite
    sync report (2026-07-20) skips `push_report_to_vault` entirely and renders HTML straight from
    the JSON with `report_url=""`; a nightly per-run email isn't worth a GitHub commit every night
    the way the weekly/daily digests are. Skip steps that don't earn their keep for a given report
@@ -192,12 +227,18 @@ that no new message landed, while a different (still-matched) notification type 
 
 ## Palette
 
-Kanagawa Wave hex values are read directly from Ghostty's own bundled theme file
-(`/Applications/Ghostty.app/Contents/Resources/ghostty/themes/Kanagawa Wave` on Will's Mac), not
-approximated from memory — re-read that file if the palette ever needs re-deriving (e.g. Will
-switches Ghostty themes) rather than reusing the hardcoded hex constants at the top of
-`render-terminal-report.py` on faith. Status colors use the *bright* ANSI variants (green
-`#98bb6c`, yellow `#e6c384`, red `#e82424`); decorative-only chrome (the titlebar traffic lights)
-deliberately uses the *dim* variants so it's never visually confused with real status. `<meta
-name="color-scheme" content="dark">` + `supported-color-schemes` are required so mail clients
-don't auto-invert the authored dark palette.
+**Superseded 2026-08-17** — the email is now the resilience-ledger design system, not Kanagawa
+Wave/Ghostty-derived. Hex values are hardcoded in `render-terminal-report.py`'s `LEDGER_STYLE`
+block, sourced from `~/Desktop/resilience-ledger-design-system/tokens.css` on Will's Mac —
+re-derive from that file (not from memory) if the palette ever needs to change, the same
+"don't hand-tune hex values here" discipline as before, just pointed at a different source of
+truth now. `<meta name="color-scheme" content="light dark">` + `supported-color-schemes` cover
+both modes now (previously dark-only) so mail clients render the correct authored palette
+either way instead of auto-inverting an unstyled body.
+
+Original Kanagawa Wave/Ghostty derivation note, preserved for history (the live email HTML no
+longer uses these values): hex values were read directly from Ghostty's own bundled theme file
+(`/Applications/Ghostty.app/Contents/Resources/ghostty/themes/Kanagawa Wave` on Will's Mac).
+Status colors used the *bright* ANSI variants (green `#98bb6c`, yellow `#e6c384`, red
+`#e82424`); decorative-only chrome (the titlebar traffic lights) deliberately used the *dim*
+variants so it was never visually confused with real status.
