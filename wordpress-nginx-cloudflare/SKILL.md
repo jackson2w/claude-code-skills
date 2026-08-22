@@ -1,6 +1,6 @@
 ---
 name: wordpress-nginx-cloudflare
-description: This skill should be used when deploying or migrating a WordPress site onto a native nginx + PHP-FPM + MariaDB stack (not Docker, not a managed host like GridPane/WP Engine), when hardening a WordPress origin behind Cloudflare with an Origin CA certificate and Authenticated Origin Pulls, when importing a BackWPup/GridPane export onto a new server, when WP-Cron needs a real heartbeat because DISABLE_WP_CRON is set or the site gets low traffic, or when debugging a WordPress 500 error that traces to a GridPane-specific absolute path or a stale object-cache.php drop-in. Trigger phrases include "migrate wordpress off gridpane", "wordpress nginx php-fpm deployment", "cloudflare origin ca certificate", "authenticated origin pulls", "wp-cron not running", "DISABLE_WP_CRON", "object-cache.php fatal error", "wordfence auto_prepend_file", "BackWPup import", "wp-config.php DB_HOST socket", "real_ip_header cloudflare nginx".
+description: This skill should be used when deploying or migrating a WordPress site onto a native nginx + PHP-FPM + MariaDB stack (not Docker, not a managed host like GridPane/WP Engine), when hardening a WordPress origin behind Cloudflare with an Origin CA certificate and Authenticated Origin Pulls, when importing a BackWPup/GridPane export onto a new server, when WP-Cron needs a real heartbeat because DISABLE_WP_CRON is set or the site gets low traffic, when debugging a WordPress 500 error that traces to a GridPane-specific absolute path or a stale object-cache.php drop-in, when a fail2ban jail (e.g. wordpress-login) shows real bans that don't seem to actually stop the traffic, when investigating whether Cloudflare Access/WAF is genuinely blocking a brute-force pattern against wp-login.php or xmlrpc.php, or when a Cloudflare Access self-hosted application seems to protect one hostname but not a variant of it (e.g. apex vs. www). Trigger phrases include "migrate wordpress off gridpane", "wordpress nginx php-fpm deployment", "cloudflare origin ca certificate", "authenticated origin pulls", "wp-cron not running", "DISABLE_WP_CRON", "object-cache.php fatal error", "wordfence auto_prepend_file", "BackWPup import", "wp-config.php DB_HOST socket", "real_ip_header cloudflare nginx", "fail2ban jail full", "wordpress-login jail", "fail2ban ban not blocking", "CF-Connecting-IP ban ineffective", "cloudflare access www bypass", "cloudflare access hostname scoping", "xmlrpc.php brute force", "rotated nginx logs investigation", "cloudflare rate limiting free plan".
 ---
 
 # WordPress on nginx + PHP-FPM + MariaDB, behind Cloudflare
@@ -102,6 +102,107 @@ down for everyone. Fetch Cloudflare's current IP ranges live
 (`https://www.cloudflare.com/ips-v4` and `/ips-v6`) rather than hardcoding them — they do
 change. Verify the fix by making a real request and confirming the access log shows the
 actual originating IP, not a Cloudflare range.
+
+## fail2ban bans are cosmetic against Cloudflare-proxied traffic, even configured correctly
+
+Getting `real_ip_header` right (above) fixes *logging* and jail *matching* — it does not fix
+*blocking*. A local `iptables`/`nftables` ban targets whatever IP fail2ban logged, but the
+actual TCP peer connecting to the origin is always one of Cloudflare's edge IPs, never the
+real visitor — so an OS-level ban on the real visitor's IP never matches the real connection
+and blocks nothing. Confirmed directly (2026-08-20): fail2ban banned an attacker within 7
+seconds of the first matched line, then logged 893 more successful hits from the same IP over
+the next 8+ hours, each with an accompanying `fail2ban.actions WARNING ... already banned`
+line — proof the daemon believed it had blocked the traffic while the traffic kept flowing.
+
+To check whether this is happening on a given host: find a `Ban <ip>` line in
+`fail2ban.log`, note its timestamp, then `grep <ip>` the nginx access log for any hits *after*
+that timestamp. Continued hits post-ban means the ban is inert, not that fail2ban is
+malfunctioning — this is the expected, structural outcome for any site behind Cloudflare's
+proxy, regardless of jail tuning.
+
+**The real backstop for Cloudflare-fronted traffic lives at Cloudflare's edge, not in
+fail2ban**: a WAF Custom Rule (Security → WAF → Custom rules, expression like
+`http.request.uri.path eq "/xmlrpc.php"` → Block) for an endpoint that should never be
+reachable at all, or a Rate Limiting Rule (Security → WAF → Rate limiting rules) for one that
+needs to stay reachable but capped (e.g. `/wp-login.php`, 10 requests per period → Block).
+Both enforce by the real visitor IP regardless of proxying, because they run at the edge
+before the request is ever proxied to origin. Free plan rate limiting is locked to a fixed
+10-second counting period and 10-second mitigation timeout (not a UI bug — confirmed via
+Cloudflare's own plan-availability docs) and only 1 rule; Single Redirects get a separate
+quota of 10 rules. Write match expressions as **path-only** (`http.request.uri.path eq
+"..."`) rather than including the hostname — this makes the rule automatically cover every
+hostname in the zone (apex, www, any future subdomain) with no extra configuration, which
+matters given the Access gotcha below. Keep fail2ban as a detection/alerting signal for
+these hosts (Telegram-notify on ban is genuinely useful for noticing a pattern exists) — just
+don't rely on its ban action to actually stop anything.
+
+## Cloudflare Access application hostname scoping — apex and www are not the same protection
+
+A Cloudflare Access self-hosted application's destination (e.g.
+`williejackson.com/wp-login.php*`) only matches the exact hostname configured. If nginx
+serves both `example.com` and `www.example.com` from the same `server_name` line (a common
+default), and the Access app was only ever set up for the apex, **`www.example.com/wp-login.php`
+gets zero Access enforcement** — a real `200` straight from WordPress, not the `302` to
+`<team>.cloudflareaccess.com` the apex correctly returns. This is easy to miss because it
+looks symmetrical from the origin's side (one nginx block, one WordPress install, identical
+content either way) and because testing from a personal browser can mask it entirely: an
+existing Access session cookie is scoped to the app/hostname and survives an origin move, so
+a logged-in visit to the *protected* hostname shows the real WP login form and looks
+identical to a *bypassed* hostname unless tested cookie-less.
+
+**Verify with `curl`, not a browser**, from both hostnames:
+```bash
+curl -sI https://example.com/wp-login.php | head -3      # expect 302 to cloudflareaccess.com
+curl -sI https://www.example.com/wp-login.php | head -3  # check independently, don't assume
+```
+Any `200` here (a real WordPress response) where a `302` is expected means that hostname has
+no Access enforcement, full stop — confirmed by the response itself, no dashboard check
+needed.
+
+**Fix the whole class of problem, not just the one path.** Adding `www` as a second
+destination on the same Access application only closes it for that one app+path — any other
+future gap between the two hostnames needs the exact same fix repeated. If the extra
+hostname isn't actually wanted (common — `www` is often just a legacy default nobody
+intentionally uses), eliminate it entirely instead: a Cloudflare Redirect Rule
+(Rules → Redirect Rules → Single Redirects; the built-in "Redirect from WWW to root"
+template handles the common case, wildcard match `https://www.*` → `https://${1}`,
+`Preserve query string` on) bounces every `www` path to the apex before Access, WAF, or
+origin ever see it — closing the entire hostname, not one path on it. Consider a matching
+origin-side backstop too: split the shared nginx `server_name` into two blocks, a
+content-serving one scoped to the apex only and a redirect-only one for the extra hostname
+(`return 301 https://example.com$request_uri;`), so the protection doesn't depend solely on
+the Cloudflare-side rule staying enabled.
+
+## Investigating a brute-force incident: use the full log history, not just today's
+
+`fail2ban-client status <jail>` reports lifetime totals (`Total failed`, `Total banned`) —
+`/var/log/nginx/access.log` alone only covers the current day. A conclusion drawn from
+today's log plus the currently-banned IPs can miss the real incident entirely if it happened
+on a rotated day; check `access.log.1` (yesterday, plain) and `access.log.2.gz` /
+`fail2ban.log.1` etc. (`zgrep` for the compressed ones) before concluding a jail's history is
+benign or fully understood.
+
+If a jail's filter matches multiple endpoints in one pattern (e.g. `wordpress-login` matching
+both `POST /wp-login.php` and `POST /xmlrpc.php` at `200`), split them apart before drawing
+conclusions — a jail dominated by one endpoint's spam can hide a much smaller but more
+serious incident on the other. `xmlrpc.php` spam (fake `Jetpack`/`WordPress.com` user agents
+probing for open XML-RPC) is common background noise; a real `wp-login.php` `200` is not.
+
+**Before concluding a `200` at origin means Access/WAF failed to enforce, rule out a raw
+origin-IP bypass** — a request could be reaching WordPress directly by hitting the origin's
+real IP, never touching Cloudflare's edge at all, which is a completely different problem
+(origin IP exposure, not an edge-enforcement gap) needing a different fix. Distinguish the
+two with the AOP test from above: attempt the same request directly against the origin IP
+with no client cert.
+```bash
+curl -sk -X POST "https://<origin-ip>/wp-login.php" -H "Host: example.com" -d "log=x&pwd=x" \
+  -o /dev/null -w "%{http_code}\n"   # expect 400 if AOP is genuinely enforced
+```
+If that returns `400`, any `200` found in the real logs necessarily presented a valid
+Cloudflare client cert — meaning it really did come through Cloudflare's proxy, confirming an
+edge-enforcement gap (Access/WAF/hostname-scoping) rather than an origin exposure. If the
+direct-origin test itself returns something other than `400`, AOP isn't actually enforced and
+that's the real, more fundamental problem to fix first.
 
 ## WP-Cron needs a real heartbeat on a low-traffic site
 

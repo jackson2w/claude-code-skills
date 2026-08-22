@@ -1,6 +1,6 @@
 ---
 name: caddy-cloudflare-wildcard-proxy
-description: This skill should be used when standing up Caddy as a reverse proxy for internal/homelab domains with a wildcard TLS certificate via Cloudflare DNS-01, when a Caddyfile needs one certificate to cover many internal hostnames, when routing Caddy to a backend that's deliberately bound to loopback only and reachable via an existing Tailscale Serve endpoint, or when debugging a fresh unprivileged LXC where tailscaled fails with "/dev/net/tun does not exist" or MagicDNS doesn't register into systemd-resolved. Trigger phrases include "caddy wildcard cert", "caddy dns-01 cloudflare", "caddy custom build dns plugin", "reverse proxy to tailscale serve backend", "loopback-bound service reverse proxy", "tun device does not exist unprivileged lxc", "tailscale magicdns not registering systemd-resolved", "split-horizon internal domain caddy".
+description: This skill should be used when standing up Caddy as a reverse proxy for internal/homelab domains with a wildcard TLS certificate via Cloudflare DNS-01, when a Caddyfile needs one certificate to cover many internal hostnames, when routing Caddy to a backend that's deliberately bound to loopback only and reachable via an existing Tailscale Serve endpoint, when a Caddy instance itself needs to be loopback-only and a request returns an empty 200 response or `ss -tlnp` shows it listening on `*:port` despite the site address looking like `127.0.0.1:port`, or when debugging a fresh unprivileged LXC where tailscaled fails with "/dev/net/tun does not exist" or MagicDNS doesn't register into systemd-resolved. Trigger phrases include "caddy wildcard cert", "caddy dns-01 cloudflare", "caddy custom build dns plugin", "reverse proxy to tailscale serve backend", "loopback-bound service reverse proxy", "tun device does not exist unprivileged lxc", "tailscale magicdns not registering systemd-resolved", "split-horizon internal domain caddy", "caddy empty 200 response", "caddy content-length 0", "caddy site address host matcher not bind", "caddy listening on wildcard despite 127.0.0.1", "tailscale serve empty response from caddy backend".
 ---
 
 # Caddy + Cloudflare DNS-01 wildcard proxy for internal domains
@@ -111,6 +111,34 @@ record.
 
 Verify split-horizon actually holds by querying a public resolver directly and confirming it
 returns nothing: `dig +short <hostname> @1.1.1.1`.
+
+## A loopback-only site address is a Host *matcher*, not a socket bind restriction
+
+When a small app-fronting Caddy instance itself needs to be loopback-only (e.g. it sits behind
+Tailscale Serve on the same host, matching the "loopback-bound backend" pattern above but for
+Caddy itself, not the app behind it), writing the site address as `http://127.0.0.1:8000 { }`
+does **not** restrict the actual socket bind — Caddy still listens on `*:8000` (verify with
+`ss -tlnp`), and `127.0.0.1` in the site address instead becomes a **Host-header matcher**.
+Confirmed live 2026-08-21: a request whose Host header didn't literally match fell through to
+an empty automatic-HTTPS redirect handler — `200 OK`, `content-length: 0`, no error anywhere —
+which broke both a direct curl to the Tailscale IP *and*, more surprisingly, Tailscale Serve's
+own reverse-proxy hop (it doesn't send a Host header matching `127.0.0.1:8000`/`localhost:8000`
+either). This masquerades as a Tailscale Serve or DNS problem; it's neither.
+
+Fix: use a **bare port** as the site address plus an explicit `bind` directive, which actually
+restricts the socket:
+
+```caddyfile
+:8000 {
+    bind 127.0.0.1
+    reverse_proxy unix//run/php/php-app.sock
+}
+```
+
+Verify both directions after the fix, not just the happy path: `ss -tlnp` shows `127.0.0.1:8000`
+(never `*:8000` or `0.0.0.0:8000`), a direct connection to the host's Tailscale IP on that port
+is refused (`curl -m5 http://<tailscale-ip>:8000/` should time out or connection-refuse), and
+the real Tailscale Serve URL still works.
 
 ## Fresh unprivileged LXC + Tailscale gotchas
 
