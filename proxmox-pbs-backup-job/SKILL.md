@@ -1,6 +1,6 @@
 ---
 name: proxmox-pbs-backup-job
-description: This skill should be used when adding a new host (LXC or VM) to an existing Proxmox Backup Server nightly backup schedule, creating a vzdump job via `pvesh`, debugging a backup job that succeeds but the prune step fails with a permission error, or excluding one specific mount point (e.g. a bulky media/data volume) from an LXC's backup while still backing up its rootfs. Trigger phrases include "add backup job pvesh", "vzdump schedule new host", "pbs prune permission denied", "Datastore.Modify Datastore.Prune missing", "backup job finished with errors", "proxmox-backup-client prune permission check failed", "exclude mount point from backup", "mp0 backup=0", "vzdump exclude volume".
+description: This skill should be used when adding a new host (LXC or VM) to an existing Proxmox Backup Server nightly backup schedule, creating a vzdump job via `pvesh`, debugging a backup job that succeeds but the prune step fails with a permission error, excluding one specific mount point (e.g. a bulky media/data volume) from an LXC's backup while still backing up its rootfs, setting up PBS-to-PBS replication via a Remote + Sync Job (a second physical PBS instance holding a pulled copy of another datastore), a PBS API token that returns `{}` from `/access/permissions` despite a correct-looking ACL grant, `apt update` failing with `401 Unauthorized` against `enterprise.proxmox.com` on a no-subscription PBS install, or restore-testing a PBS datastore/replica by restoring to a throwaway VMID/CTID. Trigger phrases include "add backup job pvesh", "vzdump schedule new host", "pbs prune permission denied", "Datastore.Modify Datastore.Prune missing", "backup job finished with errors", "proxmox-backup-client prune permission check failed", "exclude mount point from backup", "mp0 backup=0", "vzdump exclude volume", "pbs remote sync job", "proxmox-backup-manager sync-job create", "pbs replica second instance", "pbs api token permissions empty", "access/permissions returns empty object", "pbs enterprise repo 401 unauthorized", "pbs-enterprise.sources", "restore test throwaway ctid", "pct restore verify backup", "querying namespaces failed permission check", "pbs sync job remove-vanished".
 ---
 
 # Adding a host to an existing PBS nightly backup schedule
@@ -214,3 +214,111 @@ confirmed via this read-only check that there's something to delete. Used this i
 `project_ansible_graduation_catalog` memory) — also where a variable named `GROUPS` turned out
 to silently misbehave (it's a bash built-in special variable, an array of the process's Unix
 groups); name it something else.
+
+## Setting up a second, physically separate PBS instance as a pulled replica (Remote + Sync Job)
+
+Full workflow verified end-to-end 2026-08-27 building a resilience-node replica: a fresh PBS
+install pulling a copy of an existing datastore from a primary PBS instance, then restore-tested
+for real. Applies whether the replica is another Proxmox VM or, as here, bare-metal (any Debian
+box `apt install proxmox-backup-server` on).
+
+**Direction matters — the replica runs the Sync Job, not the primary.** PBS Sync Jobs *pull*:
+whichever instance holds the destination datastore is the one that must have the Remote (pointing
+at the source) and the Sync Job configured on it. Configuring the Remote+Sync Job on the primary
+instead (pointing at the replica) pulls data the wrong direction. `--sync-direction` defaults to
+`pull`; leave it that way.
+
+```bash
+# On the REPLICA (destination) instance:
+# 1. Create a dedicated least-privilege user+token on the PRIMARY (source):
+proxmox-backup-manager user create sync-replica@pbs --comment "read-only, used by <replica> sync job"
+proxmox-backup-manager user generate-token sync-replica@pbs <token-name> --comment "..."
+# See the token-permission gotcha below -- grant the ACL to BOTH the user and the token:
+proxmox-backup-manager acl update /datastore/<name> DatastoreReader --auth-id 'sync-replica@pbs'
+proxmox-backup-manager acl update /datastore/<name> DatastoreReader --auth-id 'sync-replica@pbs!<token-name>'
+
+# 2. Get the primary's cert fingerprint (self-signed, needed to register the Remote):
+proxmox-backup-manager cert info | grep -i fingerprint
+
+# 3. On the replica: register the primary as a Remote, then create the Sync Job:
+proxmox-backup-manager remote create <remote-name> --host <primary-ip> --port 8007 \
+  --auth-id 'sync-replica@pbs!<token-name>' --password '<token-secret>' --fingerprint '<fp>'
+proxmox-backup-manager sync-job create <job-id> --store <replica-datastore> \
+  --remote <remote-name> --remote-store <primary-datastore> \
+  --schedule '06:00' --remove-vanished true
+proxmox-backup-manager sync-job run <job-id>   # trigger once manually, don't just wait for cron
+```
+
+`--remove-vanished true` keeps the replica's retention actually tracking the primary's pruning
+instead of accumulating independently — matches the whole point of it being a *replica*, not a
+second, separately-retained archive. Set `gc-schedule` on the new datastore too (see the section
+above) — a fresh datastore is exactly as exposed to the "never had a gc-schedule" incident as
+the original was.
+
+**Use the primary's LAN IP for the Remote, not its Tailscale hostname**, if the replica's own
+DNS resolution doesn't go through something Tailscale-aware (e.g. it points at a plain Pi-hole
+that only does recursive resolution, not MagicDNS). `*.ts.net` names don't resolve through a
+generic recursive resolver — confirmed 2026-08-27, `Querying namespaces failed - client error
+(Connect)` when the remote's `--host` was a `.ts.net` name the replica genuinely couldn't
+resolve. Both instances on the same LAN subnet makes this moot anyway; use the IP.
+
+### Gotcha — a PBS API token's permissions are capped by its *parent user's own* ACL, not just the token's
+
+Granting an ACL to the token itself (`user@realm!tokenname`) is not sufficient on its own — if
+the owning user (`user@realm`) has zero ACL entries of its own, the token's effective
+permissions are also zero, **even though the token's own ACL entry looks completely correct**.
+Confirmed 2026-08-27: `sync-job run` failed with `Querying namespaces failed - HTTP error 403
+Forbidden - permission check failed`, and `curl`ing `/api2/json/access/permissions` directly with
+the token returned `{"data":{}}` — an authenticated (200 OK) but *empty* permission set — despite
+`proxmox-backup-manager acl list` clearly showing the token's own `DatastoreReader` grant on the
+right path. Fix confirmed: grant the **same role to the plain user**, not just the token
+(`proxmox-backup-manager acl update /datastore/<name> DatastoreReader --auth-id 'sync-replica@pbs'`,
+no `!tokenname` suffix) — permissions immediately populated correctly afterward. Always grant
+both when creating a scoped service token from scratch; a token-only grant that "looks right" in
+`acl list` will still silently produce zero access.
+
+### Gotcha — `proxmox-backup-server`'s own postinst adds the paid enterprise repo, which 401s on a no-subscription install
+
+A fresh `apt install proxmox-backup-server` can leave
+`/etc/apt/sources.list.d/pbs-enterprise.sources` in place (pointing at
+`https://enterprise.proxmox.com/debian/pbs`), which requires a paid subscription — every
+subsequent `apt update` fails outright with `401 Unauthorized`, blocking *all* package updates on
+the host, not just PBS's own. An existing no-subscription PBS install elsewhere in the same fleet
+may never have hit this (e.g. if it was built by a slightly different install sequence) — don't
+assume a sibling host's clean `apt update` means this file won't be present on a new one; check
+`ls /etc/apt/sources.list.d/` directly. Fix: `rm /etc/apt/sources.list.d/pbs-enterprise.sources`
+— the `pbs-no-subscription` repo (set up separately per the standard no-subscription install
+steps) is sufficient on its own.
+
+### Restore-testing a replica for real, not just trusting "sync completed"
+
+A sync job reporting success only proves bytes transferred, not that they're restorable. Prove
+it with an actual restore to a throwaway VMID/CTID on a real Proxmox host, then tear it down:
+
+```bash
+# On a Proxmox VE host (pve), add the PBS replica as a temporary storage backend:
+pvesm add pbs <temp-storage-name> --server <replica-ip> --port 8007 \
+  --username '<user>@pbs!<token>' --password '<token-secret>' \
+  --datastore <replica-datastore> --fingerprint '<replica-cert-fingerprint>'
+pvesm list <temp-storage-name>   # confirm real snapshot history is visible
+
+# Restore the most recent snapshot of some small, low-risk guest to an unused VMID:
+pct restore 999 '<temp-storage-name>:backup/ct/<vmid>/<timestamp>' \
+  --storage local-zfs --unprivileged 1 --hostname restore-test-999
+pct set 999 --net0 name=eth0,bridge=vmbr0,firewall=1,ip=dhcp,type=veth   # fresh MAC, no hwaddr specified
+pct start 999
+pct exec 999 -- systemctl is-active <the-guest's-main-service>   # confirm it's genuinely running, not just booted
+
+# Clean up immediately -- this was a throwaway, not a new permanent guest:
+pct stop 999 && pct destroy 999
+pvesm remove <temp-storage-name>
+proxmox-backup-manager user remove <temp-restore-test-user>@pbs   # if a separate scoped user was minted for this
+```
+
+Confirming a real service is `active` inside the restored container (not just that `pct start`
+returned success) is what actually proves the backup is usable — a container can boot with a
+corrupted or incomplete application config and still show as "running." Explicitly not
+specifying `hwaddr` on the `--net0` re-set generates a fresh random MAC, avoiding the known
+MAC-conflict issue from restoring a VM/CT backup with its original network identity still
+attached while the real guest is also running (see the homelab's Tailscale gotchas for the `qm`
+equivalent of this).

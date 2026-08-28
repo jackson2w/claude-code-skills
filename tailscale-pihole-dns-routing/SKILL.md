@@ -438,3 +438,37 @@ page) to Pi-hole's IP directly, and disable any "also advertise router's IP" opt
 after a lease renewal, clients query Pi-hole directly and attribute correctly. Static hosts not
 on DHCP (e.g. a hypervisor with a fixed IP) need `/etc/resolv.conf` edited directly instead — this
 is the one case a plain manual edit is correct and durable, since nothing else manages that file.
+
+## ASUSWRT: "WAN DNS Setting" and "LAN → DHCP Server" DNS fields are two different settings
+
+On ASUS routers (confirmed on an RT-AX1800S, stock firmware `3.0.0.4.386_69195`), **Advanced
+Settings → WAN → Internet Connection**'s "WAN DNS Setting" card and **Advanced Settings → LAN →
+DHCP Server**'s "DNS and WINS Server Setting" card both show near-identical UI (DNS Server 1/2
+fields, an "advertise router's IP" toggle) but control genuinely different things: the WAN page
+sets what the *router itself* uses for its own outbound DNS queries; the LAN→DHCP Server page
+sets what gets pushed to LAN clients via DHCP option 6. **Setting only the WAN page does nothing
+for client DNS redundancy** — clients keep getting whatever the DHCP page has configured (often
+just the router's own IP, or a single nameserver), regardless of what WAN shows. Confirmed
+2026-08-27 adding a second Pi-hole as DNS2: the WAN page already correctly showed both IPs, but a
+client's actual DHCP-assigned nameserver list (`scutil --dns` on macOS) only had one entry until
+the *separate* LAN→DHCP Server page's DNS Server 2 field — which had been typed in but never
+actually clicked Apply on — was saved. If a client isn't picking up an expected DNS server
+change, check both pages independently rather than assuming one config surface covers both, and
+verify via a live DHCP lease renewal on a real client, not just the router UI showing saved
+values.
+
+## Verifying real failover/resolution behavior on macOS: don't use bare `dig`
+
+`dig` (no `@server` argument) reads `/etc/resolv.conf` directly and does **not** go through
+`mDNSResponder` — so it doesn't reflect macOS's actual scoped-resolver configuration (the
+multi-nameserver-per-interface setup `scutil --dns` shows, which is what real applications use
+via `getaddrinfo`). A `dig`-based failover test can report total failure (`connection timed out;
+no servers could be reached`) even when the real system resolver would succeed via a second
+configured nameserver. Confirmed 2026-08-27 testing DNS2 failover: bare `dig` timed out
+completely after 18s with the primary DNS server stopped, while `dscacheutil -q host -a name
+<domain>` — which does go through the real resolver path — succeeded (took ~44s, slow but
+correct). Use `dscacheutil -q host -a name <domain>` (or an actual app/browser) for any test
+meant to represent real client DNS behavior on macOS, not `dig` by itself. `dig
+@<specific-ip> <domain>` (with an explicit server) is still fine for testing one resolver in
+isolation — the gap is specifically bare `dig`'s use of `/etc/resolv.conf` as a stand-in for the
+system resolver, which it isn't.

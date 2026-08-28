@@ -248,6 +248,26 @@ wants the same mode. Caught here via a routine `--check --diff` before applying 
 `dry-run-before-scoped-playbook-test` habit), which is what surfaced the pre-existing drift
 in the first place, not something specific to this change.
 
+## Gotcha 6 — a bridge-mode container's `127.0.0.1` is its own loopback, not the host's
+
+A compose stack that mixes `network_mode: host` (for a service that genuinely needs to bind
+real host ports, e.g. Pi-hole needing raw port 53) with plain bridge-mode services (the
+default, e.g. a monitoring tool like Uptime Kuma with a normal `ports:` mapping) has two
+*different* loopback namespaces in play. From inside a bridge-mode container, `127.0.0.1`
+resolves to that container's own loopback — never the Docker host's — so a monitor/health-check
+configured to hit `127.0.0.1:<port>` for a *different*, host-networked service in the same
+compose file will fail to connect, even though both containers are "on the same box" and even
+in the same `docker compose` project. Confirmed 2026-08-27: an Uptime Kuma DNS monitor
+(bridge-mode, default `ports: - "127.0.0.1:3001:3001"`) targeting Resolver Server `127.0.0.1`
+for a host-networked Pi-hole container on the same host failed outright — fixed by pointing the
+monitor at the host's real LAN IP instead, which bridge-mode containers *can* reach (Docker's
+default bridge networking routes out to the host's real interfaces/LAN fine, it's specifically
+the host's loopback-bound services that are unreachable this way). The fix is either point
+cross-service checks at a real IP (LAN or the Docker bridge gateway) instead of `127.0.0.1`, or
+put every service in the stack on `network_mode: host` if they all need to talk to each other
+via true host loopback — don't assume `127.0.0.1` means the same thing everywhere in a mixed
+bridge/host compose file.
+
 ## Backup: a Docker-Compose VM usually wants a full, unexcluded vzdump
 
 Unlike Jellyfin's bulky, reproducible-from-elsewhere media mount (`backup=false` on that
