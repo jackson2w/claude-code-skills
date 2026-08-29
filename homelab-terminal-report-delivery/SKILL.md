@@ -45,15 +45,81 @@ Two established patterns now, not one:
   read — the whole point is not duplicating a big report into a phone notification.
 - **Rich-primary** (`nightly-backups`, `r2-offsite-backup`, `b2-offsite-backup`, all switched
   2026-08-20): `send_rich_telegram_report <json_file> <subject> <report_url>` (new in the shared
-  lib) builds a bulleted, scannable message straight from the same `bluf` +
-  `categories[].items[]` JSON as the email, one blank line between bullets. Paired with making
-  Postmark **conditional** — only call `send_postmark_email` when `overall_status != "ok"` —
+  lib) builds a scannable message straight from the JSON — see "The Four-Line Standard" below for
+  the exact shape (this replaced an earlier bullet-per-category-item dump 2026-08-29, which broke
+  the standard's own ≤4-section rule on any report with more than a couple of items). Paired with
+  making Postmark **conditional** — only call `send_postmark_email` when `overall_status != "ok"` —
   since this was driven by Postmark's 100/month free-tier cap (see
   `project_postmark_telegram_quota_shift` memory for the real numbers that motivated it). Right
   fit for daily-cadence, usually-`ok`, no-action-needed-on-a-good-day reports. On `warn`/`fail`
   both channels still fire, same as before this change. Don't reach for rich-primary by default
   — it only makes sense once Postmark volume (or phone-notification noise) is an actual
   problem; minimal-link is still the right starting point for a brand-new report.
+
+## The Four-Line Standard (2026-08-29)
+
+Every Telegram message sent through this system — `send_rich_telegram_report` and
+`send_telegram_failure` alike — follows one shape: **one status glyph from a closed set (✅ ok/
+recovered, ⚠️ warn/degraded, 🔴 fail/needs attention, 🔧 auto-fixed), then up to 3 more optional
+sections (impact, action — pick one, never both — link), each separated by a blank line**, never
+packed onto consecutive lines. Hard bans in the body: raw HTTP codes/JSON/stack traces/systemd
+unit lines/ZFS-or-bucket paths (say the plain-English equivalent), ISO-8601 timestamps, raw
+comma-joined lists past two entries (cap at 2 + "+N more" — see `backup-status-checks.sh`'s
+`NOT_OK_NAMES` construction for the pattern, and use `awk`, never `paste -sd`, to join them —
+`paste -d` only honors the first character of a multi-char delimiter per join position, the exact
+same gotcha as bash `IFS`, confirmed live: it silently produced `"immich,pbs-vm-snapshot"` with no
+space). Target ≤4 sections / ~400 characters total — if it doesn't fit, it belongs in the linked
+report, not the message. This grew out of a fleet-wide audit that found the pre-2026-08-29
+`send_rich_telegram_report` (a bullet per category item, no length cap) and several ad-hoc scripts
+outside this system violating all of the above; this skill's schema/functions are the standard's
+canonical implementation going forward — any *new* Telegram-sending code in this environment
+should match this shape even if it doesn't use `render-terminal-report.py`/this JSON schema at
+all.
+
+`send_rich_telegram_report` gets its impact/action line from a new optional `telegram_summary`
+JSON field (see schema below) — **not** derived from `bluf` via truncation, since `bluf` is
+allowed to carry raw paths/bucket names/technical detail for the email/vault copy of the same
+report, and no generic string transform can reliably strip an embedded bucket name out of prose.
+If a producer omits `telegram_summary`, the function falls back to a generic, name-free count
+synthesized from `categories[].items[].status` (`"All N checks ok."` / `"N of M checks need
+attention."`) rather than parsing any per-item `headline`/`detail` text, which isn't guaranteed
+Telegram-safe either. **Any new rich-primary automation should populate `telegram_summary`
+explicitly** rather than relying on the fallback, the same way `backup-status-checks.sh` and the
+two sync `.j2` templates do.
+
+`send_telegram_failure <subject> <detail> [<link_or_path>]` is for orchestrator-internal failure
+paths that fire before a report JSON exists (so `send_rich_telegram_report` can't be used yet) —
+always the fail glyph, same blank-line shape. Every ad-hoc raw-string `send_telegram "🔴 ..."` call
+across `weekly-housekeeping-run.sh`/`backup-summary-run.sh` was converted to this 2026-08-29;
+reach for it instead of hand-building a failure string in any new orchestrator.
+
+A subject passed into `send_rich_telegram_report` should be **plain** — no `❯`/`[FAILED]`
+decoration — since the function prepends its own status glyph now and a decorated subject just
+doubles up with it (e.g. `✅ ❯ nightly-backups ...`). That decoration is still fine, and expected,
+for the separate Postmark email subject line (`send_postmark_email` doesn't render a glyph the
+same way) — see `backup-summary-run.sh`'s `SUBJECT` vs. `EMAIL_SUBJECT` split for the pattern if
+a report needs both.
+
+**Using the standard without a JSON report object.** Not every Telegram-sending script has (or
+needs) a `render-terminal-report.py`-shaped report — a simple event/status notifier (a watchdog,
+a fail2ban hook, a health-check poller) just calls `send_telegram "$(echo "..." | html_escape)"`
+directly with a hand-built glyph + blank-line-separated message, or `send_telegram_failure` for
+its failure paths, same as above — no `overall_status`/`categories`/`telegram_summary` involved.
+This is how Round 2 (2026-08-29) migrated `dns-symlink-watchdog`, `boot-watchdog`,
+`post-reboot-bounce`, `pbs-vm-os-disk-snapshot`, `pihole-dot-failover`, `restic-backup`,
+`openclaw-model-corruption-watchdog`, and the fail2ban ban/unban notifier — all previously
+hand-rolled `curl`/local-`send_telegram()` clones, none of them JSON-report producers. Existing
+cooldown/debounce/state-machine logic in a script like this is unrelated to the standard and
+should stay untouched — only the message text and glyph choice change.
+
+**Deploying the lib to a host that isn't `ansible-ctrl`/`pbs`.** Per-consumer `/opt/<name>/lib/`
+(mirroring the R2/B2 precedent), not a shared `/root/bin/lib/` — that path is a special case
+unique to `ansible-ctrl` as the control node. Round 2 added first-time lib deploys to `pve`
+(`/opt/boot-watchdog/lib/`, `/opt/pbs-vm-os-disk-snapshot/lib/`) and `pihole`
+(`/opt/pihole-dot-failover/lib/`) this way. **A separate git repo with no automated sync to
+`homelab-ansible`** (e.g. `dfw-ansible` on host `dfw`) needs the lib file copied in as a second,
+manually-maintained copy (`playbooks/scripts/lib/homelab-report-lib.sh` there) — a future change
+to the standard has to be applied in both repos by hand until/unless that gets automated.
 
 ## The pieces
 
@@ -74,19 +140,28 @@ that run from `ansible-ctrl` itself, or to wherever the automation actually runs
   fallback string; don't reintroduce placeholder text there).
 - **`lib/homelab-report-lib.sh`** — shared bash functions, sourced by every orchestrator script:
   `send_telegram`, `html_escape` (Telegram `parse_mode=HTML` needs `&`/`<`/`>` escaped),
-  `send_rich_telegram_report <json_file> <subject> <report_url>` (added 2026-08-20 — builds the
-  bulleted rich-primary message described above from the same JSON as email; see that section
-  for when to use it vs. plain `send_telegram`), `send_postmark_email` (builds the
-  `HtmlBody`+`TextBody` JSON payload via `jq`, posts to Postmark's API), and
-  `push_report_to_vault <local_md_file> <slug.md> <commit_message>` (commits+pushes into the
-  `obsidian-vault` repo root, prints the GitHub blob URL to stdout, or an empty string on
-  failure — treat empty as "no link available," never as a hard error, matching the
-  report-only never-block-a-delivery-channel posture).
+  `send_rich_telegram_report <json_file> <subject> <report_url>` (builds the rich-primary message
+  per the Four-Line Standard above from the JSON's `telegram_summary`/`overall_status`; see that
+  section for the shape and when to use it vs. plain `send_telegram`), `send_telegram_failure
+  <subject> <detail> [<link>]` (added 2026-08-29 — for pre-JSON orchestrator failure paths, see
+  the Four-Line Standard section), `send_postmark_email` (builds the `HtmlBody`+`TextBody` JSON
+  payload via `jq`, posts to Postmark's API), and `push_report_to_vault <local_md_file> <slug.md>
+  <commit_message>` (commits+pushes into the `obsidian-vault` repo root, prints the GitHub blob
+  URL to stdout, or an empty string on failure — treat empty as "no link available," never as a
+  hard error, matching the report-only never-block-a-delivery-channel posture).
+  **Deployed to three destinations from this one canonical source** — `ansible-ctrl:/root/bin/lib/`
+  via `homelab-report-timers.yml`, plus `pbs:/opt/r2-backup/lib/` and `pbs:/opt/b2-backup/lib/` via
+  `r2-backup-install.yml`/`b2-backup-install.yml`. The `ansible-ctrl` deploy task didn't actually
+  exist until 2026-08-29 (the copy sitting there matched the repo by coincidence, not by any
+  playbook managing it) — if a future change to this file doesn't seem to be taking effect on
+  `weekly-housekeeping-run.sh`/`backup-summary-run.sh`, confirm the deploy task in
+  `homelab-report-timers.yml` is still there before assuming something else is wrong.
 - **The JSON schema** every report is built from:
   ```json
   {
     "overall_status": "ok" | "warn" | "fail",
-    "bluf": "2-4 short paragraphs separated by a blank line (\n\n) -- each one scannable idea, not one dense block",
+    "bluf": "2-4 short paragraphs separated by a blank line (\n\n) -- each one scannable idea, not one dense block. Allowed to carry raw paths/bucket names/technical detail -- this is the email/vault copy, not Telegram.",
+    "telegram_summary": "OPTIONAL, rich-primary reports only. One Telegram-safe sentence for send_rich_telegram_report's impact/action line -- no raw paths/bucket names/host lists past two. Producer-owned, not derived from bluf. See 'The Four-Line Standard' above.",
     "claude_code_prompts": [
       {"title": "short label, e.g. 'Investigate pbs SSH host-key change'",
        "prompt": "a complete, self-contained, ready-to-paste prompt for a fresh Claude Code session addressing JUST this one issue -- tell it to read CLAUDE.md first, investigate root cause, propose a fix, apply only after Will confirms"}

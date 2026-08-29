@@ -63,7 +63,13 @@ was luck, not something the process guaranteed, and isn't a reason to skip the s
    process for something that could have been caught up front — or worse, not discovering it until
    a dashboard has been silently blank for hours.
 2. **Generate the new credential** wherever it's actually minted (dashboard, BotFather, `openssl
-   rand`, etc.).
+   rand`, etc.). **If more than one similarly-named/similarly-purposed credential of the same
+   type exists (e.g. two Telegram bots), name the exact identifier explicitly before the human
+   acts in the external UI** — don't assume "the bot" is unambiguous. Confirmed 2026-08-29: a
+   BotFather revoke aimed at a shared homelab bot (`@homelab4712bot`) instead hit a *different*
+   bot (`@dfwclaw_bot`, a separate agent's own dedicated bot) because the instruction didn't
+   pin the exact username, costing a second incident (that agent's Telegram channel crash-looped
+   until its own token was separately fixed) layered on top of the original rotation.
 3. **The human writes it directly to wherever it needs to live** — never pasted into chat (see the
    global CLAUDE.md secret-handling rule). If the same value needs to land in multiple files,
    write it to all of them in the same sitting rather than trickling out over separate round

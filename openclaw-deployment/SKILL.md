@@ -24,6 +24,15 @@ openclaw --version
 Run as a dedicated non-root, non-login system user (`adduser --disabled-password
 --disabled-login openclaw; passwd -l openclaw`), managed via a systemd unit with `User=openclaw`,
 `ProtectSystem=strict`, `PrivateTmp=true`, `ReadWritePaths=/home/openclaw/.openclaw`.
+`ReadWritePaths=` is space-separated and grows as OpenClaw needs write access elsewhere — e.g.
+the homelab's `/srv/agent-exchange/to-claude` (a filesystem-based cross-agent handoff channel,
+one-way by design: only that specific subpath is writable, not its sibling `to-olu`) was added
+alongside the `.openclaw` path on 2026-08-23. Verify any such addition against real confinement
+(`systemd-run` matching the unit's properties + a check of the live process's
+`/proc/<pid>/mountinfo`), not a `sudo -u openclaw` shortcut — see "`NoNewPrivileges=yes`
+silently kills `sudo`" below for why that shortcut misses confinement bugs generally. Full
+detail on the agent-exchange channel specifically is in the homelab planning repo's
+`project_agent_exchange_channel` memory, not this skill.
 
 ## Gotcha 1 — setting the API key does NOT select which model gets used
 
@@ -637,6 +646,19 @@ class is a stronger "try the cheap reset" signal than a repeated one. Prefer bat
 config edits into one `--batch-file` apply + single restart over many incremental `config set`
 calls once a session has already needed one corruption-clearing restart.
 
+**Recurred again, 2026-08-23, different session — same signature, same fix, worth trusting the
+pattern-match over re-investigating from scratch.** A one-shot cron job (`lane=cron-nested`,
+`sessionKey=agent:main:cron:<id>:run:<id>`) failed twice in a row with the identical
+`FailoverError: Unknown model: anthropic/claude-sonnet-5`, in a gateway process that had by
+then absorbed a full session's worth of plugin installs, config edits, and multiple prior
+restarts (building a cross-agent filesystem channel, installing/testing a `before_agent_finalize`
+hook plugin, several `config set`-driven hot reloads along the way). Recognized immediately from
+the error string alone, confirmed via journal (`[reload] config change detected... hot reload
+applied` entries earlier in the same window), fixed the same way — plain `systemctl restart
+openclaw.service`, gateway came back with the same plugin list intact, no further recurrence
+in the following minutes. Didn't re-diagnose from zero; matching this exact error string against
+this section is faster and just as reliable as re-deriving it.
+
 ### Tailscale Funnel to a same-node Serve chain: use single-hop `--set-path`, not two hops
 
 `tailscale funnel --bg 8445` (targeting an existing `tailscale serve --https=8445 ...` mount on
@@ -1001,3 +1023,169 @@ following `"role": "toolResult"` entry. Large tool-call payloads (schemas, big t
 sometimes stored content-addressed (a `*Hash`/`*Chars` pair) rather than inline — don't assume a
 missing/empty-looking field means the call had no real arguments before checking whether the
 session format hashed it instead.
+
+### A tool call mid-turn plus a literal `NO_REPLY` follow-up silently discards a real, already-generated reply
+
+Real incident, 2026-08-23 on `dfw` ("Olu"): two inbound Telegram voice notes in a DM got no
+reply at all — `journalctl -u openclaw.service` showed **two** Anthropic API calls per turn
+(vs. one for a plain text turn in the same window), ending in
+`[turn/kernel] visible channel turn dispatched with no queued reply payloads`. Initial
+theories (a context-free isolated per-message session; the audio-transcript
+`[Audio transcript (machine-generated, untrusted)]:` wrapper — see the voice-transcription
+section above — inducing reflexive silence) were both wrong, and only ruled out by reading the
+session's own raw `.jsonl` transcript directly (see the parsing section just above) rather than
+trusting the summarized `sessions_history` tool output or the gateway log alone.
+
+**Actual mechanism**: call #1 produced a real, substantive reply *and* a tool call (a memory
+write). The tool ran. Call #2 — the required follow-up turn after any tool call resolves — was
+the model, in isolation, judging "nothing more to add" and outputting the literal string
+`NO_REPLY` as that follow-up's entire text. **The turn dispatcher uses only the final model
+call's text as the turn's reply** — it does not concatenate or fall back to an earlier call's
+substantive output. So the real, generated reply from call #1 was silently thrown away.
+
+This is not audio-specific and not session-isolation-related at all — it will reproduce on
+*any* turn where the model makes a tool call and then signs off the mandatory follow-up call
+with `NO_REPLY` instead of substantive closing text (or a repeat of the earlier substance).
+Reserve `NO_REPLY` for turns where it is the model's *only* output for the whole turn (the
+documented ambient/group-silence use case) — never as a "nothing further to add" sign-off after
+a tool call already produced something worth sending. `sessions_history`'s `session:<hash>`
+labels on entries like these are just internal turn-grouping IDs for the multiple model calls
+within one turn, not evidence of a separate isolated agent session — don't read them as such.
+
+**Structural mitigation, built and live-verified same day.** A model's own commitment to "stop
+doing this" is not enough on its own — it recurred **twice more within the hour**, on a plain
+text turn (not audio), confirming the failure is generic to any tool-call-then-final-call turn,
+not tied to the original audio trigger. Built a small local plugin (`before_agent_finalize`
+hook — the documented extension point for "inspect the natural final answer and request one
+more model pass") that detects the exact bad shape (final text is literally `NO_REPLY`, an
+earlier assistant message in the same turn had substantive text, and a tool call happened
+somewhere in between) and returns `{ action: "revise", retry: { instruction, maxAttempts } }`
+to force one more pass instead of letting the turn dispatch silently.
+
+**v1 caught the pattern but wasn't sufficient**: the guard correctly fired
+(`before_agent_finalize requested revision`), but the forced retry pass *also* ended in
+`NO_REPLY` — because the retry instruction only *described* the situation and asked the model
+to decide again, the same judgment call it had already gotten wrong once in that same turn.
+With `maxAttempts: 1`, one failed retry meant the harness gave up and dispatched silently
+anyway — a real second failure on a live production turn, not a hypothetical.
+
+**v2 fix, confirmed live**: extract the actual substantive text found earlier in the turn and
+hand it back to the retry pass **verbatim**, inside the instruction ("send this exact text");
+the retry's job becomes mechanical repetition instead of a second decision. Bumped
+`maxAttempts` 1→2 as cheap defense-in-depth, not the primary fix. Verified two ways before
+trusting it: (1) confirmed the deployed file actually contained v2's `substantiveTexts`/
+`recoveredText` extraction, not v1's plain boolean check; (2) re-ran the exact synthetic repro
+that had caught the v1 failure, isolated in a subagent so it wouldn't touch the live
+conversation — the retry pass's actual output was the distinctive marker text handed to it,
+sent verbatim, `stopReason=stop`, no silent-drop warning. A real pass, not just "the hook
+fired." Treat this as closing the specific tool-call-then-NO_REPLY shape, not as proof no
+further NO_REPLY-adjacent failure mode exists — worth watching over further real incidents
+rather than treating as permanently settled.
+
+**Design lesson for any similar guard**: a `before_agent_finalize` (or similar) revise/retry
+mechanism is only as good as the instruction it hands back. Asking the model to re-decide
+something it already got wrong once in the same turn has no reason to succeed the second time
+either — extracting and replaying the actual prior content, turning the retry into mechanical
+repetition rather than a fresh judgment call, is what actually closed the gap here.
+
+**Full closure, 2026-08-23**: Olu relocated the plugin to a permanent home
+(`~/.openclaw/workspace/plugins/no-reply-guard/`), caught and fixed its own regression during
+that move (a full uninstall/reinstall accidentally dropped `plugins.entries.no-reply-guard.
+hooks.allowConversationAccess`, silently disabling the hook — caught via `typedHooks` coming
+back empty on inspection, before declaring success), and confirmed a live synthetic test passed
+post-restart with the actual recovered marker text delivered verbatim, not another silent
+`NO_REPLY`. Re-verification was briefly blocked by the model-corruption bug below recurring
+rapidly (three synthetic-test subagent attempts in close succession each apparently
+re-triggering it) — Olu correctly recognized the known-bug signature via its own investigation
+and stopped retrying rather than hammering a known-bad window, deferring to a human decision on
+whether to force an out-of-cooldown restart. Good instinct on both counts (self-caught
+regression via direct state inspection, not blind retry-until-success).
+
+**Filed upstream**: [openclaw/openclaw#128314](https://github.com/openclaw/openclaw/issues/128314)
+— related to, but distinct from, the already-fixed
+[#93166](https://github.com/openclaw/openclaw/issues/93166)/[#116006](https://github.com/openclaw/openclaw/pull/116006)
+(transcript-isolation fix, merged 2026-07-29, confirmed present in the 2026.7.1-2 install used
+here). #116006 fixed the retry pass seeing its own rejected draft in the transcript; the bug
+above is that the retry pass can *independently* produce `NO_REPLY` again even without seeing
+any prior draft, because the natural retry instruction just re-poses the same judgment call.
+
+### `Restart=on-failure` does not cover OpenClaw's own graceful "supervisor restart" exit — the service goes down and stays down
+
+Real outage, 2026-08-23, caused by legitimate OpenClaw behavior, not a misconfiguration on our
+side: when OpenClaw's gateway process receives `SIGUSR1`, it performs `[gateway] restart mode:
+full process restart (supervisor restart)` — a deliberate, clean self-exit
+(`code=exited, status=0/SUCCESS`) that assumes an external process supervisor (systemd, pm2,
+etc.) will relaunch it immediately. This is a legitimate, documented-sounding self-restart
+mechanism (used here when a plugin config change needed a full reload, e.g. after moving a
+plugin to a new install location) — not a crash.
+
+**The trap**: a systemd unit with the seemingly-reasonable `Restart=on-failure` does **not**
+restart on this exit — `on-failure` only covers a non-zero exit code or certain fatal signals,
+and a clean `status=0` exit is explicitly excluded by that policy's own definition. The service
+just goes `inactive (dead)` and stays there indefinitely — no crash loop, no restart attempt,
+no alert, nothing in the journal after the clean shutdown lines. Caught here only because a
+newly-built watchdog's manual test run happened to overlap with a real SIGUSR1 restart Olu
+triggered on its own (relocating a plugin), and a routine post-action status check found the
+service dead several minutes after the fact — this could easily have gone unnoticed far longer
+in a less actively-monitored moment. Confirmed via `systemctl status`: `Process: ...
+(code=exited, status=0/SUCCESS)`, `Deactivated successfully`, with the unit never re-entering
+`activating`.
+
+**Fix**: change the unit's `Restart=` from `on-failure` to `always` — the standard policy for
+any long-running service that should never intentionally stay down, covering both crashes and
+this kind of deliberate clean-exit-expects-relaunch pattern. `systemctl daemon-reload` is
+sufficient to apply it (no service restart needed — the policy only governs what happens on
+the *next* exit). **Verified by reproducing the exact failure**: sent `SIGUSR1` directly to the
+live process after the fix and confirmed systemd auto-relaunched it within seconds with no
+manual intervention, vs. the original incident where nothing brought it back at all.
+
+If any other OpenClaw deployment shows the same `Restart=on-failure` in its unit (common
+default, looks like the "safe, minimal" choice), check for `restart mode: ... (supervisor
+restart)` anywhere in that instance's own history before assuming crash-only coverage is
+sufficient — any deployment that installs plugins, changes config needing a full reload, or
+otherwise triggers this self-restart path has the same exposure.
+
+## A revoked/rotated Telegram token crash-loops the channel with a clear signature — and the fix is often outside the `/home/openclaw` access boundary
+
+Real incident, 2026-08-29: a BotFather mix-up during an unrelated credential rotation
+accidentally revoked `@dfwclaw_bot`'s own live token. Failure signature in `journalctl -u
+openclaw.service` is unambiguous and self-diagnosing — the error names the exact fields to
+check:
+
+```
+[telegram] [default] Telegram bot token unauthorized for account "default" (getMe returned 401
+from Telegram; source: config token). Update channels.telegram.botToken,
+channels.telegram.tokenFile, or TELEGRAM_BOT_TOKEN with the current BotFather token.
+[telegram] [default] channel exited: ...
+[telegram] [default] auto-restart attempt N/10 in <backoff>s
+```
+
+Backoff climbs toward 300s over ~10 attempts, then a `[health-monitor]` restart resets the
+counter and it repeats — a real outage, not a one-off blip, until the token is actually fixed.
+
+**On this deployment, `TELEGRAM_BOT_TOKEN` resolved to `/root/.config/openclaw-anthropic.env`**
+(root-owned, wired into the unit via `EnvironmentFile=` — confirm with `systemctl cat
+openclaw.service | grep EnvironmentFile`), alongside the other provider keys — not a plaintext
+value inside `~/.openclaw/openclaw.json`. **This file lives outside `/home/openclaw` entirely**,
+so it is *not* covered by the harness's `/home/openclaw` access restriction (see
+`feedback_no_claude_code_home_openclaw_access` in the homelab planning repo's memory) — Claude
+Code can read field names (`cut -d= -f1`, no values) and the systemd unit, and can run the
+restart + verification, even though it still can't see or write the actual secret value (the
+human writes that directly into the file, standard credential-rotation-protocol pattern). Don't
+assume every OpenClaw-token problem is blocked by that boundary — check whether the value is
+actually env-sourced via a root-owned `EnvironmentFile` first, since that's a very common pattern
+for provider keys per the "Secrets: two valid patterns" section above.
+
+Fix: human edits the `TELEGRAM_BOT_TOKEN=` line in place (`sudo nano <path>`, never a shell
+command-line argument — keeps it out of bash history), then `sudo systemctl restart
+openclaw.service`. **OpenClaw handles the rotation gracefully on its own** — no extra step
+needed for the stale Telegram update offset:
+
+```
+[telegram] [default] starting provider (@dfwclaw_bot)
+[telegram] Detected token rotation for account "default" (was <id>, now <id>); discarding stale
+update offset <N> and starting fresh.
+```
+
+Verify clean via `journalctl -u openclaw.service --since <restart-time> | grep -i telegram` —
+should show the two lines above and nothing matching `unauthorized|401|exited|auto-restart`.

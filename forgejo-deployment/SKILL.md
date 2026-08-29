@@ -3,6 +3,14 @@ name: forgejo-deployment
 description: This skill should be used when installing or debugging a self-hosted Forgejo (Gitea fork) git server as a native binary + systemd service — not Docker. Covers the three required secrets (SECRET_KEY/INTERNAL_TOKEN/JWT_SECRET) and the permission-denied crash-loop from a locked-down config file, unattended install without exposing the web setup wizard, why Forgejo's built-in git-SSH server needs firewall-level scoping instead of an app-level bind address, a non-obvious API scope requirement for repo deletion, and Vultr Block Storage's region-locking. Trigger phrases include "forgejo install", "forgejo systemd", "forgejo app.ini", "JWT_SECRET failed loading", "save oauth2.JWT_SECRET failed", "forgejo not supposed to be run as root", "forgejo admin user create", "forgejo random-password", "forgejo generate secret", "forgejo INSTALL_LOCK", "forgejo git-ssh port", "forgejo delete repo API 403", "write:user scope forgejo", "vultr block storage wrong region", "no active instances available in this region", "vultr NVMe block storage not available".
 ---
 
+**Status note (2026-08-24): the `dfw` instance this skill documents was decommissioned** — it
+was live 2026-08-16 through 2026-08-24 but had zero repos, pushes, clones, or logins in its
+entire log history (every real repo went to GitHub instead). Torn down: service, binary, `git`
+user, Tailscale Serve mapping, `ufw` rules, and the dedicated Vultr Block Storage volume all
+removed. See `project_dfw_vultr_buildout` memory for the full decommission record. This skill's
+technical content below is kept as-is for any future redeploy — nothing here needs correcting,
+it just isn't live right now.
+
 ## Version — verify, don't assume
 
 Check `forgejo.org/releases` (or `code.forgejo.org/forgejo/forgejo/releases`) for the current

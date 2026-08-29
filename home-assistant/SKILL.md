@@ -33,7 +33,14 @@ HAOS is a locked-down appliance OS, not a general Debian box:
 - No SSH/root shell by default (advanced users can enable an SSH add-on, but treat this as
   intentionally locked down, not a bug).
 - Ignores Proxmox cloud-init entirely — onboarding (creating the first admin account) happens
-  through HA's own first-boot web wizard on port 8123, not via injected SSH keys/config.
+  through HA's own first-boot web wizard, not via injected SSH keys/config.
+- **The web UI's port is no longer reliably 8123.** Confirmed on a fresh HAOS 18.2 build
+  (2026-08-22): the LAN-facing UI is served on **port 80** by Supervisor's own proxy, while 8123
+  itself returns connection-refused from outside the guest (Core is presumably still bound to it
+  internally, just not exposed). Symptom if you assume 8123: ICMP ping succeeds, TCP to 8123 is
+  refused, but plain `http://<ip>` (port 80) serves the real HA frontend fine — don't read the
+  refused 8123 as the guest being down. Check both ports (`nc -zv <ip> 80 8123`) rather than
+  assuming one.
 - No working QEMU guest agent — don't expect `qm agent <vmid> ping` or IP-readback tooling to
   work; find the DHCP-assigned IP via the host's ARP table (`ip neigh` on the Proxmox node,
   matched by the guest's MAC) instead.
@@ -54,8 +61,10 @@ Because there's no normal shell, exposing HA over Tailscale goes through the **T
 (`hassio-addons/addon-tailscale`, needs the community add-on repo above), not a hand-run
 `tailscale serve` command the way every other Debian LXC/VM in this homelab is exposed:
 
-1. Install + start the Tailscale app, authenticate via the login URL shown in its **Log** tab
-   (open in Chrome on desktop — other browsers are known to misbehave with this flow).
+1. Install + start the Tailscale app, authenticate via the login URL shown in its **Log** tab.
+   Originally noted as Chrome-only (other browsers reportedly misbehaving with this flow) — not
+   reproduced on a 2026-08-22 build, where the same auth link worked fine in Safari. Try whatever
+   browser is handy; only fall back to Chrome if the link actually misbehaves.
 2. In its **Configuration** tab, show "unused optional configuration options" to reveal:
    - `share_homeassistant`: `disabled` / `serve` / `funnel` — use **`serve`** for tailnet-only
      access (this homelab's standing default — see constraint #3 in `homelab/CLAUDE.md`); only
@@ -63,15 +72,34 @@ Because there's no normal shell, exposing HA over Tailscale goes through the **T
    - `share_on_port`: `443` / `8443` / `10000` — `443` matches every other tailnet-only service
      in this homelab.
 3. Restart the Tailscale app itself (not just HA) after changing its config.
-4. **Required in `configuration.yaml`** or HA will reject requests coming through the add-on's
-   reverse proxy:
-   ```yaml
-   http:
-     use_x_forwarded_for: true
-     trusted_proxies:
-       - 127.0.0.1
-   ```
-   Restart HA (not just the add-on) after adding this.
+4. **Trusted proxies must be configured or HA rejects requests coming through the add-on's
+   reverse proxy with a plain `400: Bad Request`** (confirmed live 2026-08-22 — direct IP access
+   still returned `200` the whole time, only the proxied path 400'd, which is the tell that this
+   is what's wrong rather than HA actually being down). Two different mechanisms depending on
+   version:
+   - **Older versions / still on YAML**: add to `configuration.yaml` via the File Editor app,
+     then restart HA:
+     ```yaml
+     http:
+       use_x_forwarded_for: true
+       trusted_proxies:
+         - 127.0.0.1
+     ```
+   - **Newer versions (confirmed on the 2026-08-22 HAOS 18.2 build)**: the `http:` YAML key is
+     **silently ignored** post-migration — editing it does nothing, no error, and HA shows a
+     dedicated warning ("HTTP YAML configuration is ignored after migration ... stops working in
+     2027.2.0") the next time you open Settings if you still have a stale block in the file.
+     Configure it via **Settings → System → Network → HTTP server → Reverse proxy** instead:
+     toggle **Trust X-Forwarded-For** on, add each proxy IP under **Trusted proxies** (as a bare
+     IP, e.g. `127.0.0.1` and `192.168.50.181` for a LAN Caddy instance — not a CIDR, despite the
+     field's own hint text). Clicking **Save** on that card *is* the restart — no separate
+     Settings → System → Restart needed. HA then shows a "Confirm new HTTP server configuration"
+     dialog with a ~5-minute auto-revert countdown (a lockout safety net) — click **Confirm** once
+     you've verified you can still reach it, or it silently reverts on its own.
+   - If proxying through more than one hop (e.g. both a local Tailscale Serve add-on *and* a
+     separate Caddy host), list every hop's source IP in trusted proxies — `127.0.0.1` alone
+     covers the Tailscale/HAOS-local add-on, but a LAN reverse proxy on another host needs its
+     own real IP added too.
 
 ## Mobile app setup
 

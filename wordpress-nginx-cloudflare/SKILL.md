@@ -22,6 +22,36 @@ Give the pool `pm = ondemand` for a low-traffic site (no idle workers sitting ar
 Create a dedicated MariaDB database + user scoped to just that database, random password,
 written only into `wp-config.php`.
 
+## Dedicated PHP-FPM pool user needs setgid on uploads, or new uploads 403
+
+The "dedicated system user, own PHP-FPM pool" pattern above (e.g. pool `user = wpwww` /
+`group = wpwww`, distinct from nginx's `www-data`) breaks new file uploads unless the upload
+directories force group inheritance. Confirmed 2026-08-29 (`williejackson.com` on `dfw`, first
+real media upload since a GridPane migration): PHP-FPM creates new files with its own pool
+group (`wpwww`) as the file's group, not the parent directory's group (`www-data`) — Unix only
+inherits a directory's group onto new children when the directory has the **setgid bit** set,
+which a plain `mkdir`/`chmod 750` does not add. Nginx (running as `www-data`) then gets a `403`
+trying to serve a file it exists and can see (`ls` on the directory works — that's the
+directory's own group-read bit) but can't open (the *file's* mode has no `www-data` read).
+
+**Diagnostic signature**: a nonexistent filename in the same directory correctly 404s (proves
+nginx can reach/read the directory), but the real just-uploaded file 403s with nginx's own
+stock error page — that combination points at file-level, not directory-level or vhost-level,
+permissions. Pre-migration files copied in via rsync/tar (this skill's own import section)
+often still work because they kept their *original* host's group, masking the bug until the
+first fresh upload happens on the new box.
+
+**Fix** (systemic, doesn't touch the FPM pool's user/group security boundary):
+```bash
+chown -R <pool-user>:www-data wp-content/uploads/<affected-month>/   # fix existing files
+chmod -R u+rwX,g+rX wp-content/uploads/<affected-month>/
+find wp-content/uploads/ -type d -exec chmod g+s {} \;              # fix it permanently
+```
+The `find ... chmod g+s` on the whole `uploads/` tree makes every subdirectory (including ones
+WordPress creates automatically for future months) inherit `www-data` group on new files from
+then on — no umask tuning, no FPM pool config change needed. Do this once, right after initial
+deploy or migration, rather than waiting for the first real upload to surface it.
+
 ## Importing a GridPane/BackWPup export
 
 A BackWPup export lands as a `.tar` containing the DB dump (`.sql`), `wp-config.php`, the
