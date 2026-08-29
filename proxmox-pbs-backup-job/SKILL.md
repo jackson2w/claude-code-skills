@@ -305,9 +305,9 @@ pvesm list <temp-storage-name>   # confirm real snapshot history is visible
 # Restore the most recent snapshot of some small, low-risk guest to an unused VMID:
 pct restore 999 '<temp-storage-name>:backup/ct/<vmid>/<timestamp>' \
   --storage local-zfs --unprivileged 1 --hostname restore-test-999
-pct set 999 --net0 name=eth0,bridge=vmbr0,firewall=1,ip=dhcp,type=veth   # fresh MAC, no hwaddr specified
+pct set 999 --delete net0   # no network interface at all -- see the gotcha below
 pct start 999
-pct exec 999 -- systemctl is-active <the-guest's-main-service>   # confirm it's genuinely running, not just booted
+pct exec 999 -- systemctl is-active <the-guest's-main-service>   # confirm it's genuinely running, not just booted; pct exec needs no network
 
 # Clean up immediately -- this was a throwaway, not a new permanent guest:
 pct stop 999 && pct destroy 999
@@ -317,8 +317,36 @@ proxmox-backup-manager user remove <temp-restore-test-user>@pbs   # if a separat
 
 Confirming a real service is `active` inside the restored container (not just that `pct start`
 returned success) is what actually proves the backup is usable — a container can boot with a
-corrupted or incomplete application config and still show as "running." Explicitly not
-specifying `hwaddr` on the `--net0` re-set generates a fresh random MAC, avoiding the known
-MAC-conflict issue from restoring a VM/CT backup with its original network identity still
-attached while the real guest is also running (see the homelab's Tailscale gotchas for the `qm`
-equivalent of this).
+corrupted or incomplete application config and still show as "running." `pct exec` works purely
+through Proxmox's own attach mechanism and needs no network path at all, so there's no reason to
+give the restored container one.
+
+### Gotcha — giving the restored container *any* network path risks a live Tailscale identity collision with the real guest, even with a fresh MAC
+
+A restored container's disk is a byte-for-byte copy of the real guest's, including
+`/var/lib/tailscale` — its live Tailscale node key comes along for the ride. Tailscale identifies
+a device by node key, not IP or MAC, so giving the restored container *any* route out (even
+`pct set --net0 ...,ip=dhcp,type=veth` with no `hwaddr` specified, which correctly avoids a MAC
+conflict) still lets its `tailscaled` phone home using the exact same identity as the real, live
+guest — a genuine identity collision, not just an IP conflict. Confirmed live 2026-08-29: restore-
+testing `ansible-ctrl` this way hijacked the real `ansible-ctrl`'s own MagicDNS entry mid-test,
+which broke a restore-test *script running on ansible-ctrl itself*'s route to `pve`, cascading
+into false failures on every guest tested after it and leaving the clone orphaned (no automatic
+teardown could run once connectivity broke). The real `ansible-ctrl` was unaffected once the
+clone was destroyed — but this can silently hit any guest, not just automation hosts, wherever
+something else depends on that guest's Tailscale identity being stable during the test window.
+
+**Fix: give the restored container no network interface at all** (`pct set <ctid> --delete net0`
+after restore, before start) rather than a freshly-MAC'd one — `pct exec` doesn't need it.
+Verified: with no net0, `tailscaled` still starts as a process but reports `unexpected state:
+NoState` / "network is down" via `tailscale status` — it has no path to the coordination server,
+so the collision becomes structurally impossible rather than just less likely. If a restore-test
+genuinely needs real network reachability for some other reason, mask `tailscaled` inside the
+guest before starting it (`pct exec <ctid> -- systemctl mask tailscaled`) as a second layer, but
+prefer no network path at all when the check doesn't require one.
+
+**If you're automating this** (not just running it by hand once), wrap the whole per-guest cycle
+in a `trap ... EXIT`-based cleanup, not just an inline `pct stop && pct destroy` at the end of the
+happy path — a mid-run failure (this Tailscale collision itself, or an SSH blip, or anything else)
+can skip straight past inline cleanup and leave the throwaway container running indefinitely with
+no supervision, which is exactly what compounded the incident above.
