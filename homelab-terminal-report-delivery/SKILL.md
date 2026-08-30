@@ -164,7 +164,7 @@ that run from `ansible-ctrl` itself, or to wherever the automation actually runs
     "telegram_summary": "OPTIONAL, rich-primary reports only. One Telegram-safe sentence for send_rich_telegram_report's impact/action line -- no raw paths/bucket names/host lists past two. Producer-owned, not derived from bluf. See 'The Four-Line Standard' above.",
     "claude_code_prompts": [
       {"title": "short label, e.g. 'Investigate pbs SSH host-key change'",
-       "prompt": "a complete, self-contained, ready-to-paste prompt for a fresh Claude Code session addressing JUST this one issue -- tell it to read CLAUDE.md first, investigate root cause, propose a fix, apply only after Will confirms"}
+       "prompt": "a TIGHT, self-contained prompt: the specific finding (host/VMID/file/error) and the decision to make -- do NOT tell it to read CLAUDE.md first or restate hard constraints/confirm-before-acting, see below"}
     ],
     "categories": [
       {"name": "Category Name",
@@ -175,6 +175,26 @@ that run from `ansible-ctrl` itself, or to wherever the automation actually runs
   `claude_code_prompts` is one entry **per distinct actionable issue**, not one combined prompt —
   the whole point is letting Will paste them into separate Claude Code sessions one at a time.
   Empty array renders no Follow-ups section at all.
+- **Don't repeat standing-context boilerplate inside every prompt** (fixed 2026-08-30, was
+  costing real reading time at 12 prompts/week): telling each prompt to "read CLAUDE.md first"
+  and "confirm before risky actions" is redundant — any Claude Code session opened in the
+  project directory loads its `CLAUDE.md` (hard constraints included) automatically, and
+  "confirm before risky/destructive actions" is already a standing constraint there. Say it
+  **once**, as a static line rendered above the whole Follow-ups section by
+  `render-terminal-report.py` itself (zero LLM cost, always consistent — see
+  `render_html()`/`render_markdown()`), not per-prompt by the judgment-generation instructions.
+  Each individual prompt should carry only what's actually specific to that finding.
+- **The weekly housekeeping sweep additionally cross-run-diffs its checks JSON** (own state
+  file, `first_seen`/`recurring`/`status_changed` per item, `resolved_since_last_run` array —
+  see [[project_weekly_housekeeping_sweep]] and `weekly-housekeeping-run.sh`) **before** handing
+  it to the judgment step, so a finding that's unchanged since last run gets folded into its
+  `categories[]` item as a compact "(recurring since \<date\>, still pending)" note instead of
+  generating a fresh full `claude_code_prompts[]` entry every week. This state-diff step and its
+  metadata fields are internal to the weekly sweep's own checks-JSON input — not part of this
+  shared `claude_code_prompts`/`categories` output schema itself — but the pattern (don't
+  re-litigate an already-known, unchanged finding at full ceremony every run) is reusable by any
+  other automation built on this skill that runs frequently enough for the same problem to
+  recur.
 
 ## Wiring up a new automation
 
