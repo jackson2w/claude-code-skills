@@ -36,6 +36,11 @@ and verified end-to-end deploying the Homelab Console app (Laravel 13 + Filament
 7. Pest's Laravel plugin helpers (`actingAs`, `get`, `post`, ...) are **not** global functions
    by default — `use function Pest\Laravel\actingAs;` explicitly, or `Call to undefined
    function actingAs()`.
+8. **Run `base-hardening.yml` against the new LXC before calling it done** — see
+   `proxmox-ansible-provisioning`'s provisioning-sequence section. An app being live is not the
+   same as the host being hardened; confirmed missed live 2026-08-30 (`console`, this skill's
+   own reference deploy, ran 9 days with default SSH password auth and no unattended-upgrades
+   before a weekly sweep caught it).
 
 ## Dedicated PHP-FPM pool, not the default `www` pool
 

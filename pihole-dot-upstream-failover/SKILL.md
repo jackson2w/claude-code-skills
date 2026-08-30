@@ -113,3 +113,46 @@ check for a real TLS record header if it's supposed to be encrypted — `17 03 0
 the payload, not just "port 853 is being used"), then restore the primary and confirm a clean
 revert. If the underlying host can reboot, do that too and confirm both services and the
 watcher's own state come back correctly rather than trusting a stale assumption.
+
+## Diagnosing a "DNSSEC validation looks broken" false alarm
+
+A health check that queries a deliberately-broken-signature test domain (`dnssec-failed.org`,
+`sigfail.verteiltesysteme.net`) and expects `SERVFAIL` can false-alarm for a reason that has
+nothing to do with Unbound's own validator: those domains are rarely cached anywhere (Unbound's
+`val-bogus-ttl` default is 60s), so almost every check is a cold query, and their own external
+authoritative nameservers occasionally take 20-60s+ to respond — a single bare `dig` with
+default retry behavior (~15s total) has no margin for that. Confirmed live 2026-08-30 on the
+homelab's Pi-hole: a weekly sweep's `pihole_dnssec_validation` check FAILed, but the validator
+was genuinely correct and fast the whole time.
+
+**How to tell "really broken" from "cold query to a slow external test domain" without
+guessing:**
+
+1. Bypass Pi-hole-FTL and query Unbound directly on its own port, not through the resolver
+   chain: `dig +tries=1 +timeout=20 @127.0.0.1 -p 5335 dnssec-failed.org` (adjust the port to
+   whatever the local `unbound.conf.d/*.conf` sets — `5335` here). This isolates "is Unbound
+   itself slow/wrong" from "is something upstream of Unbound (FTL, the LAN path) the problem."
+2. Force a genuinely cold query rather than trusting an ambient cache state:
+   `unbound-control flush_zone dnssec-failed.org` right before the test query.
+3. Raise verbosity to watch the validator's own reasoning in real time:
+   `unbound-control verbosity 3`, then `journalctl -u unbound -f` (or `--since`) while the query
+   runs. Look for `Did not match a DS to a DNSKEY, thus bogus` / `Could not establish a chain of
+   trust` — if that line appears (even if the client-side `dig` timed out before ever seeing a
+   reply), the validator concluded correctly and quickly; the delay is downstream of validation
+   logic, in getting a reply back to the client at all. **Set verbosity back to 1 when done** —
+   verbosity 3 is chatty and not meant to run steady-state.
+4. Cross-check with a working control query in the same breath:
+   `sigok.verteiltesysteme.net` (should resolve `NOERROR`) and a real-world uncached domain
+   (should resolve in well under a second) — if those are fine, general connectivity/root-server
+   reachability isn't the cause, narrowing it further to that one test domain's own external
+   reachability at that moment.
+5. Retry a few times, spaced a minute+ apart. This kind of slowness is usually transient and
+   self-resolving within minutes (external nameserver hiccup, not a local config problem) —
+   confirmed by 4 consecutive fast/correct results minutes after reproducing the slow case live.
+
+If a health-check script needs to encode this distinction itself (not just a one-off manual
+diagnosis), don't just lengthen a single `dig`'s timeout — retry a few times with a moderate
+per-try timeout, and treat "never got any response" as a `warn` (worth a glance) rather than a
+`fail` (confirmed broken), reserving `fail` for an actual non-`SERVFAIL` answer. See the
+homelab's `weekly-housekeeping-checks.sh` `pihole_dnssec_validation` check (fixed
+2026-08-30, `homelab-ansible` commit `bd8bfc7`) for a working example of this shape.

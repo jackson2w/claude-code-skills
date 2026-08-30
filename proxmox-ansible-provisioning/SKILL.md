@@ -39,6 +39,17 @@ pct create <vmid> local:vztmpl/<exact-template-filename> \
   --ssh-public-keys /path/to/pubkey-file-on-the-host
 ```
 
+**Last step, not optional: run `base-hardening.yml` against the new host before considering it
+provisioned** — `ansible-playbook base-hardening.yml --limit <new-host>` (add it to the
+inventory first if it isn't already). A host is not done just because its application stack is
+up. Confirmed missed live 2026-08-30: a Laravel/Filament LXC (`console`) ran for 9 days after
+build with `PasswordAuthentication`/`PermitRootLogin` still at OpenSSH defaults (sshd on
+`*:22`, no scoping firewall) and zero unattended-upgrades, caught only by the next weekly
+sweep's `ansible_check` category — a check that only runs weekly, so don't rely on it to catch
+this at build time. `dpkg -l unattended-upgrades` and `sshd -T | grep -i passwordauth` are the
+two fastest ways to confirm hardening actually landed, not just that the playbook reported
+`ok`.
+
 ## Gotcha 1 — Debian 13 (trixie) LXCs need `nesting=1` or systemd can leave services degraded
 
 `pct create` prints `WARN: Systemd 257 detected. You may need to enable nesting.` — this is real,
