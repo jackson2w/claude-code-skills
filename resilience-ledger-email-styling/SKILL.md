@@ -122,12 +122,23 @@ schema without a real reason.
 curl https://api.cloudflare.com/client/v4/accounts/af56d5158a7dab3e67f31efc275ec9f2/email/sending/send \
   -H "Authorization: Bearer $CLOUDFLARE_EMAIL_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"to":"...", "from":{"address":"olu@jackson2w.dev","name":"..."}, "subject":"...", "text":"...", "html":"..."}'
+  -d '{"to":"...", "from":{"address":"homelab@jackson2w.dev","name":"..."}, "subject":"...", "text":"...", "html":"..."}'
 ```
-Always include both `text` and `html` — never `html` alone. `from` must stay
-`olu@jackson2w.dev`, the only domain onboarded to Email Sending on this account. A
-`success:true` response includes a real `message_id` — that's the thing to check, not just
-that the `curl` call didn't error (see Verification below).
+Always include both `text` and `html` — never `html` alone. **Correction 2026-08-30**: the
+prior version of this note said `from` "must stay `olu@jackson2w.dev`, the only domain
+onboarded" — that was wrong on two counts, confirmed live: (1) authorization is at the
+**domain** level (`jackson2w.dev`'s SPF/DKIM are set up in this Cloudflare account), not the
+address level — any `@jackson2w.dev` local-part works immediately with **zero** additional
+setup, no per-address verification step exists for this API; tested by sending from a
+brand-new address that had never been used before and it succeeded on the first try. (2)
+`olu@jackson2w.dev` specifically was the wrong choice for non-Olu automations anyway — using
+Olu's own persona address as the sender for `dfw`'s package-check/fail2ban-digest scripts made
+those emails read as coming from Olu when they're not Olu's action, which is exactly what
+confused Will's own inbox threading. Both scripts now send from `homelab@jackson2w.dev`
+instead — use that (or a similarly purpose-named `@jackson2w.dev` address) for any *new*
+non-Olu automation on this account, and reserve `olu@jackson2w.dev` for things that are
+genuinely Olu's own output. A `success:true` response includes a real `message_id` — that's
+the thing to check, not just that the `curl` call didn't error (see Verification below).
 
 `ansible-ctrl`'s reports go out via Postmark instead (`send_postmark_email` in
 `homelab-report-lib.sh`) — different transport, same HTML.
