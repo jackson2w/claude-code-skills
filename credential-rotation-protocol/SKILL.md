@@ -38,6 +38,28 @@ time pressure — that improvisation is precisely how each of the three leaks ha
 ask, or fall back to the least-revealing option that exists (e.g. `-v` over `-vv`, `--check` alone
 over `--check --diff`) while flagging the uncertainty explicitly rather than assuming it's fine.
 
+**Telegram-specific trap, confirmed 2026-08-30: a private chat's `chat_id` never proves which bot
+is involved.** For a 1:1 bot conversation, Telegram's `chat.id` equals the *recipient's own user
+ID* — it's identical across every bot that messages that same person, so a matching `chat_id`
+between two hosts' config files proves nothing about whether they're using the same bot. Verify
+bot identity with the hash-comparison method in the table above (hash the token itself, not the
+chat_id) — or, if you need to confirm which bot a token *currently* belongs to without ever
+printing it, call `getMe` with it and compare the numeric `id` field (permanent) rather than
+`username` alone (Telegram usernames can be reassigned after a bot is renamed via BotFather,
+same family of issue as the revoke-mixup incident under Rotation checklist item 2 below). Spent a
+full investigation turn chasing a "maybe this bot got renamed" theory before a direct token hash
+compare (the method this skill already recommends) settled it in one shot — check the obvious
+row in the table above before inventing a more elaborate identity check.
+
+**Before building a fresh incident theory from raw verification, check whether this project has
+already documented the exact situation.** The same session above spent real effort hypothesizing
+about Telegram bot renames and client-side caching before re-reading this very skill file turned
+up the actual, already-recorded 2026-08-29 incident (the revoke-mixup below) that fully explained
+what was being observed. This project keeps disciplined incident records specifically so this
+kind of confusion doesn't need re-solving from scratch — search project memory and relevant
+skills for the symptom (a bot name, a host, an error string) before spending a turn re-deriving
+what's likely already written down.
+
 ## Rotation checklist
 
 **This checklist applies verbatim when *disabling* or *removing* a credential requirement, not
@@ -61,7 +83,14 @@ was luck, not something the process guaranteed, and isn't a reason to skip the s
    list Cloudflare Worker secrets, check any app's own credential store (n8n, etc.). Discovering a
    forgotten integration point *after* declaring the change done means repeating this whole
    process for something that could have been caught up front — or worse, not discovering it until
-   a dashboard has been silently blank for hours.
+   a dashboard has been silently blank for hours. **The mistake runs both directions**: confirmed
+   2026-08-30, a fleet-wide "shared credential" was assumed present on 8 hosts by pattern-matching
+   against other project conventions, without checking — a plain `test -f` on each host showed
+   none of them actually had the file (it was only ever needed on the 2 hosts that independently
+   send Telegram messages). Over-assuming reach is just as real a mistake as under-counting it —
+   it leads to proposing remediation work (a rotation, a fleet-wide push) against hosts that were
+   never actually affected. Verify presence on every candidate host; don't infer it from what
+   "should" be true given other project conventions.
 2. **Generate the new credential** wherever it's actually minted (dashboard, BotFather, `openssl
    rand`, etc.). **If more than one similarly-named/similarly-purposed credential of the same
    type exists (e.g. two Telegram bots), name the exact identifier explicitly before the human
