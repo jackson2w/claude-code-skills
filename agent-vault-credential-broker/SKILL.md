@@ -123,6 +123,84 @@ Tailscale. Fix is a narrowly-scoped addition (destination IP + the vault's speci
 a broad port-open. See the homelab-specific `reference_openclaw_egress_firewall` memory for a
 worked example.
 
+## Confirmed live on a second cutover (Hermes, 2026-08-31) — concrete CLI gotchas
+
+Deploying the `hermes-on-vps.mdx` pattern for real (not just reading the guide) surfaced several
+exact CLI behaviors worth knowing before you hit them:
+
+- **`agent-vault ca fetch --address` needs a full URL scheme**, not bare `host:port` — `--address
+  100.117.235.3:14321` fails (`first path segment in URL cannot contain colon`); `--address
+  http://100.117.235.3:14321` works. Likely applies to other subcommands' `--address` flag too.
+- **`auth login`'s auto-detected "local instance" option can be wrong and must not be trusted
+  blindly** — if the server is bound only to its Tailscale IP (not loopback, per the deployment-
+  placement guidance above), the CLI's auto-detected `Agent Vault (127.0.0.1:14321)` option
+  fails with `connection refused` even when run *on the same host* as the server. Pick "Self-
+  Hosting or Dedicated Instance" and supply the real bound address explicitly instead.
+- **`auth: type: custom` requires a non-empty `headers` map — it is the wrong type for a
+  pure path-substitution service with no header injection at all.** `headers: {}` is rejected
+  (`"headers" is required for custom auth`). Use `auth: passthrough` instead — substitutions and
+  auth are independent, so a service can use either, both, or neither; `passthrough` is the
+  "neither header injection nor blocking" type.
+- **`agent create <name> --vault <vault>:proxy --token-only`** is the confirmed working syntax
+  (default `--role` is already `no-access`; `--vault` format is `name:role`, role defaulting to
+  `proxy` if omitted).
+- **When the vault CLI lives on a different host than the credential's source `.env`** (true for
+  any agent box that doesn't have `agent-vault` installed locally, which is normal for the
+  Hermes-native pattern — no CLI install needed on the agent host at all), the non-echoing
+  credential-transfer pattern spans two hosts, not one: `ssh source-host "grep '^KEY=' .env |
+  cut -d= -f2-" | ssh vault-host "read -r VAL; agent-vault vault credential set --vault <v>
+  KEY=\$VAL"`. Verify by piping `agent-vault vault credential get ... | wc -c` back through SSH
+  and comparing byte-length against the source — never by printing the value on either end.
+- **Ansible idempotency trap**: if a playbook reads a one-time-use token file (`lookup('file',
+  ...)`) and then deletes it after embedding the value in a rendered template (reasonable — don't
+  leave the secret duplicated on disk), a second run of that same playbook will fail outright
+  (`lookup` on a missing file), not report `changed=0`. Guard both the read and the render tasks
+  with a `stat` check on the token file first (`when: token_stat.stat.exists`) so a re-run
+  without a fresh token cleanly skips rather than errors.
+
+## Gap found during the Hermes cutover's plaintext-leak sweep — check this on every future cutover
+
+**An agent's own conversation/tool-call history database can retain a credential's real value
+from before it was ever migrated to the vault, even after the source `.env` is scrubbed and even
+after the key is rotated at the provider.** Confirmed 2026-08-31: Hermes's `state.db` (its own
+session/tool-call history) contained a fragment of the original Groq API key, verbatim, from when
+it had once been set up via a chat-driven shell command (a `printf`/`grep` round-trip Hermes
+itself executed at Will's request, long before this migration). This is a **structurally
+different exposure path than the `.env` file itself** — scrubbing `.env` and wiring the vault
+does nothing to a value that was ever typed into or executed by the agent in a prior session. Any
+future Agent Vault cutover should treat "does the agent's own history/state store contain this
+value" as its own explicit check, not assumed covered by the `.env`-focused sweep. This is
+speculative but plausible for OpenClaw/dfw too (its Anthropic key may have been set up the same
+way) — unverified, since Claude Code cannot touch `/home/openclaw` at all (see
+`feedback_no_claude_code_home_openclaw_access`); worth Olu or Will checking directly.
+
+**A second, self-inflicted risk found during that same sweep**: a bounded-context `grep -o
+'.{0,N}KEYNAME.{0,M}'` search (used to inspect *what* is adjacent to a credential-name match
+without printing a whole file) is not automatically safe — a context window wide enough to be
+useful for reading structure is also wide enough to capture and print part of a real secret if
+one happens to be there, and seven clean/metadata-only files in a row provide no guarantee the
+eighth is also clean. This is a variant of the "pattern-matched redaction has the identical
+failure mode for anything it doesn't expect" lesson in global CLAUDE.md — check for an explicit
+redaction marker (`grep -c REDACTED`) or a byte-length/format heuristic *before* revealing any
+surrounding context, rather than assuming a fixed context width is safe because it has been so
+far in the same sweep.
+
+## Adding a new credential once an agent is already cut over
+
+The heavy lift (firewall widening, CA cert, proxy env wiring) is one-time per agent host — a
+*new* credential for an already-wired agent is cheap:
+
+1. **Never type the real value into a chat with the agent itself** — that's exactly the exposure
+   path in the gap above. Set it directly via the vault CLI, run by a human on the vault host.
+2. `agent-vault vault service add --vault <v> --name <svc> --host <host> --auth-type ...` (check
+   `agent-vault catalog --json` first for a known provider's real header shape).
+3. `agent-vault vault credential set KEY=<value>` on the vault host, never relayed through the
+   agent.
+4. Add only the placeholder to the agent's own env file (e.g. `NEW_KEY=__new_key__`) — the
+   existing `HTTPS_PROXY`/firewall wiring already covers any new outbound host, no repeat of the
+   firewall/CA/systemd phases.
+5. Restart the agent's gateway service to pick up the new placeholder.
+
 ## Claude Code's own classifier and this workflow
 
 Editing an *existing* credentials `.env` file (even to swap one value for a placeholder) reliably
