@@ -614,6 +614,33 @@ checks — `hooks.allowedSessionKeyPrefixes must include 'hook:' when hooks.defa
 unset` is a *startup-time* cross-field check that `validate` does not catch, and a bad value
 here crash-loops the entire gateway (see below), not just the hooks feature.
 
+### A cron job's `sessionTarget` pointed at the live conversation session can queue behind it and time out — caveat to the fix above
+
+The section above recommends pointing a hook's `sessionKey` directly at the real interactive
+channel session to avoid a separate hook-scoped session. The same pattern applied to a **cron
+job's** `sessionTarget` (e.g. `"session:agent:main:telegram:direct:<chat-id>"`) has a real
+downside: that session is a single lane, and a cron-triggered turn competing with an *active*
+turn in the same lane (a live conversation in progress) queues behind it rather than running
+concurrently.
+
+Confirmed 2026-08-30/31 (LunaRoute pilot, `weekly-share-more-nudge` cron job): every forced test
+run failed with `TimeoutError: cron: isolated agent setup timed out before runner start` (a fixed
+~60s wait) while debugging was actively happening in that same session. `journalctl -u
+openclaw.service` showed the real cause directly: `lane wait exceeded ... activeAhead=1` right
+before the timeout — the cron turn was queued behind the live conversation's own in-flight turn,
+not failing for any provider/config reason. This looked at first like a provider-specific bug
+(the pilot was mid-switch to a new model provider at the time) and cost real debugging time before
+the lane-contention signature was recognized in the logs.
+
+**Fix**: for a cron job whose turns don't need to share context/history with a live conversation
+(the common case — most cron jobs are self-contained, not conversational continuations), set
+`sessionTarget: "isolated"` instead of pointing it at the interactive session. This is also
+already the pattern other cron jobs in this environment use. A job that *does* need to run inside
+the same session as live chat (relaying into an ongoing conversation, similar to the hooks case
+above) will still hit this queuing behavior any time it fires mid-conversation — that's an
+inherent tradeoff of sharing the lane, not a bug to fix, so don't pick shared-session targeting
+for a cron job without weighing this.
+
 ### A specific session key can get "stuck" independent of the transcript file
 
 `agent:main:main` returned `FailoverError: Unknown model: anthropic/claude-sonnet-5` on every
