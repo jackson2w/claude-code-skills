@@ -88,6 +88,43 @@ docker exec vaultwarden printenv SIGNUPS_ALLOWED     # expect: false
 curl -sk -o /dev/null -w '%{http_code}\n' https://<tailnet-url>/   # expect: 200, login page loads
 ```
 
+## Updating to a newer image — `docker pull` alone doesn't move the running container
+
+This deployment has no `docker-compose.yml` (it's plain `docker run`, per the block above), so
+there's no `docker compose pull && docker compose up -d` shortcut — recreate it by hand with the
+same flags. Confirmed 2026-08-30 on `dfw`: a `docker pull vaultwarden/server:latest` had already
+been run 8 days earlier and fetched a newer image, but nothing ever recreated the container to
+use it — `docker images vaultwarden/server` showed the new image tagged `:latest` sitting next to
+the *old* image now tagged `<none>` (dangling) while the running container was still silently on
+that old, dangling one. `docker ps` gives no hint of this (`Image` column just shows the tag/ID
+either way) — always cross-check `docker inspect vaultwarden --format '{{.Image}}'` against
+`docker inspect vaultwarden/server:latest --format '{{.Id}}'` to see if they actually match before
+assuming a prior pull took effect.
+
+Recreate procedure (same flags as the original `docker run`, image tag unchanged since it's
+always `:latest`):
+
+```bash
+docker pull vaultwarden/server:latest   # confirms/fetches current latest first
+docker stop vaultwarden && docker rm vaultwarden
+docker run -d \
+  --name vaultwarden \
+  --restart unless-stopped \
+  --env-file /root/.config/vaultwarden-admin.env \
+  -e SIGNUPS_ALLOWED=false \
+  -e WEBSOCKET_ENABLED=true \
+  -v /opt/vaultwarden/data:/data \
+  -p 127.0.0.1:8080:80 \
+  vaultwarden/server:latest
+```
+
+The bind-mounted `/opt/vaultwarden/data` is untouched by the recreate — `db.sqlite3` survives
+with identical size/mtime, since only the container (not the volume) is replaced. Verify data
+integrity by `ls -la` on `db.sqlite3` before and after (same file, not regenerated), not just
+that login works. After confirming the new container is `healthy` and both the loopback and
+Tailscale Serve URLs return 200, clean up the now-orphaned old image (`docker images
+vaultwarden/server` will show it dangling/`<none>`): `docker image rm <old-image-id>`.
+
 ## Verification checklist
 
 - `ss -tlnp` shows `127.0.0.1:8080` only, never a wildcard bind
