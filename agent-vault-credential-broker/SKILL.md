@@ -37,6 +37,40 @@ Master password (`AGENT_VAULT_MASTER_PASSWORD`) has no built-in backup guidance 
 itself; treat it the same as any other durable secret — generate strong, back up off-host
 before relying on the instance.
 
+**No native TLS on the mgmt/API port** — confirmed via `agent-vault server --help` and the
+vendor's own env-var docs: there's no TLS flag or config option at all, the server is plain HTTP
+by design (default `--host` is even `127.0.0.1`), and the docs assume you'll front it with a
+reverse proxy or platform-native TLS (Fly.io is their own example) if you want HTTPS. For a
+Tailscale-only deployment, front the mgmt port (14321, not the MITM proxy port 14322 — see
+below) with Tailscale Serve, matching this homelab's standard access pattern:
+`tailscale serve --bg --https=443 http://<the-instance's-own-tailscale-IP>:14321` — **use the
+instance's own Tailscale IP as the proxy target, not `localhost`**, since the server is bound to
+that IP specifically, not loopback (`localhost:14321` gets a `502` from Serve, not a connection).
+Purely additive — the raw port stays reachable unless separately blocked (see below). Then
+update every consumer's `AGENT_VAULT_ADDR` (`gateway.env`, `openclaw-agentvault.env`, etc.) to
+the new `https://` hostname and restart each gateway — the MITM proxy env vars
+(`HTTPS_PROXY`/`HTTP_PROXY`) stay pointed at the raw IP:14322, unaffected.
+
+**To actually enforce HTTPS-only (not just make it available)**, block the raw port at the host
+firewall rather than relying on `--host` alone — `agent-vault server` has a single `--host` flag
+covering *both* the mgmt port and the MITM proxy, so rebinding just the mgmt port to loopback
+isn't possible without also breaking the MITM proxy for every consumer that reaches it directly
+via the Tailscale IP. The fix: add an nftables rule dropping the mgmt port specifically when it
+arrives from a real tailnet peer, while leaving Serve's own backend connection untouched —
+`iifname "tailscale0" tcp dport 14321 drop` in the host's own `inet filter` input chain (don't
+touch tailscale's own `iptables-nft`-managed tables, add to a separate/existing plain table
+instead). This works because a same-host connection to the box's *own* Tailscale IP routes via
+`lo`, not `tailscale0` (confirmed via `ip route get <own-tailscale-ip>` showing `dev lo`), so
+Serve's own reverse-proxy connection to the backend never matches the drop rule while a genuine
+external peer's direct connection does. Verify both directions: direct `http://` to the raw IP
+times out/fails, `https://` via the Serve hostname still returns 200, and the MITM proxy port is
+unaffected. If persisting this in `/etc/nftables.conf` (Debian's base nftables.service loads it
+at boot), remember the file always starts with `flush ruleset` — editing it live is safe (takes
+effect next boot only, when boot ordering means nftables.service runs before tailscaled installs
+its own rules), but never `systemctl restart nftables` while tailscaled already has live rules
+programmed — that flushes them too (see the Tailscale-pihole-dns-routing skill's nftables-reload
+gotcha for the general case).
+
 If the LXC/VM is unprivileged and needs Tailscale, the standard TUN-passthrough gotcha applies
 (`lxc.cgroup2.devices.allow`/`lxc.mount.entry` + full stop/start, not a service restart) — not
 specific to Agent Vault, covered generically elsewhere in this environment's Proxmox skills.
