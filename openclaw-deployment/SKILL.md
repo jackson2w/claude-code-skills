@@ -34,6 +34,18 @@ silently kills `sudo`" below for why that shortcut misses confinement bugs gener
 detail on the agent-exchange channel specifically is in the homelab planning repo's
 `project_agent_exchange_channel` memory, not this skill.
 
+**Every path in `ReadWritePaths=` must already exist on disk before the unit starts** —
+systemd builds the mount namespace before `ExecStart` runs, and a missing path fails the whole
+start with `Failed to set up mount namespacing: <path>: No such file or directory` /
+`Failed at step NAMESPACE`, then crash-loops on `Restart=always`. It does not create the
+directory for you, unlike `ReadWritePaths=` in some other tools' documentation examples.
+Confirmed 2026-08-31 wiring OpenClaw through Agent Vault's `agent-vault run --` wrapper (see
+the `agent-vault-credential-broker` skill): added `/home/openclaw/.agent-vault` to
+`ReadWritePaths=` for the wrapper's CA-cert cache, but the directory didn't exist yet — instant
+crash loop, caught within a couple restart cycles and rolled back. Create any new
+`ReadWritePaths=` target first (`mkdir -p`, correct ownership) before adding it to the unit,
+never as a "the process will create it" assumption.
+
 ## Gotcha 1 — setting the API key does NOT select which model gets used
 
 Configuring `models.providers.anthropic.apiKey` is necessary but not sufficient. Without also
