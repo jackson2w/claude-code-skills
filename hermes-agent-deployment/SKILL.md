@@ -202,6 +202,18 @@ live session, every time, not just the first time this bit someone. Distinguish 
 the tool-executor layer regardless of what the live session's own context knows, so it does NOT
 need this same nudge — only skill/doc *content* the model is expected to reason from does.
 
+## `hermes plugins doctor` with no target can exhaust /tmp on a small VPS
+
+**Confirmed 2026-09-01** (found by Chuka itself, verifying the `homelab-changes-approval`
+plugin). Run bare (`hermes plugins doctor`, no plugin id/path argument), it copies the entire
+Hermes home tree into a tmpdir to validate every plugin at once — on a small VPS where `/tmp` is
+a ~1GB tmpfs, `~/.cache/uv` and any per-tool venvs (e.g. `~/.hermes/venvs/stt`) blow through that
+easily and it dies with `No space left on device`. Moving `TMPDIR` to a disk-backed path doesn't
+fully fix it either — the copy then chokes trying to copy live Unix sockets (`gateway.sock`,
+`Errno 6`). **Always use targeted mode**: `hermes plugins doctor <plugin-id-or-path>` validates
+just that one plugin and works fine. Don't take a bare `hermes plugins doctor` failure as
+evidence a specific plugin is broken — check whether it was even given a target first.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
