@@ -168,6 +168,31 @@ before trusting a cron test:**
   writing output to a file the job manages itself, as `agent-exchange-poll` does) is the right
   choice whenever you don't need Hermes's own delivery path at all.
 
+## A gateway process restart does NOT reset Chuka's live chat session
+
+**Confirmed 2026-09-01.** Restarting `hermes-gateway.service` restarts the Python process, but
+each messaging-platform conversation (Telegram, etc.) is a persistent session tracked in
+`~/.hermes/state.db`/`~/.hermes/sessions/` (`hermes sessions list` shows title, last-active,
+and session ID) — the gateway resumes that same session's history on the new process, it does
+not start fresh. If you install a new skill or otherwise change something the *live chat*
+needs to know about, restarting the gateway does not make an already-running long-lived session
+aware of it — that session's own context/skill-awareness was established whenever it last
+started (in one real case, over 24 hours and multiple unrelated gateway restarts earlier),
+completely independent of the service's process lifecycle.
+
+Cron-triggered jobs don't have this problem — each tick is a genuinely fresh, isolated session
+(`cron_<jobid>_<timestamp>`), so a `--skill` attached to a cron job definition is visible on
+every run regardless of how old the gateway process is. It's specifically the long-running
+interactive chat sessions (Telegram/etc.) where new skills/context can go unnoticed.
+
+**The reliable fix is direct**: tell Chuka in the live chat (a message from Will, or content
+Chuka is asked to read) rather than assuming a restart or a new skill install will surface
+automatically. Chuka has full file-read tools, so pointing it at a specific path
+(`~/.hermes/skills/devops/<name>/SKILL.md`, a doc, etc.) mid-conversation works immediately —
+the gap is discovery, not capability. If a live session genuinely needs to be reset (rare — this
+loses its conversational context), that's a different, more disruptive action; don't reach for
+it just to pick up a new skill.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
