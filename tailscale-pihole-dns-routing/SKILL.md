@@ -479,6 +479,26 @@ above to this host, exactly like any other fleet host — this gives it an indep
 that works before Tailscale is connected, closing the deadlock permanently rather than requiring
 manual intervention on every future cold boot. Don't stop at breaking the immediate deadlock.
 
+**Variant for a host with no LAN path to Pi-hole at all** (an external VPS reachable only over
+Tailscale — e.g. a cloud-hosted agent gateway): Pi-hole's LAN IP isn't reachable from outside the
+LAN, and its Tailscale IP requires an active Tailscale connection to reach — using either as the
+Global-scope `DNS=` just recreates the same deadlock one layer down. There is no way to keep
+Pi-hole filtering/attribution for this host's own general DNS *and* survive a cold boot — pick a
+public resolver (`DNS=1.1.1.1`) as the Global scope instead, same `Domains=~.`/
+`ResolveUnicastSingleLabel=yes` drop-in otherwise. This is a real, deliberate trade-off (the host
+loses Pi-hole ad-blocking/attribution for its own traffic), not a workaround to feel bad about —
+same conclusion this skill already reaches for the "roaming devices" decision, and ad-blocking
+has no real value for a headless server anyway. Confirmed live 2026-09-01 on two Vultr VPSes
+(`dfw`/OpenClaw, `hermes`/Hermes) running an agentic gateway that itself depends on Tailscale
+reachability (both route real outbound API calls through a homelab-hosted credential broker) —
+both had `CorpDNS=true` and a bare Tailscale-managed `resolv.conf`, identical to the LXC that
+triggered this whole finding, and neither had been rebooted since going into that dependency.
+Installing `systemd-resolved` here also removes the `resolvconf` package if present (Debian
+treats them as alternatives) — check `apt-mark showauto resolvconf` and `apt-get remove --dry-run
+resolvconf` first; if it shows `0 to remove` beyond itself, it's dormant (a stale
+`dhclient-enter-hooks.d` leftover, not actively managing anything since Tailscale was already
+overwriting `/etc/resolv.conf` directly) and safe to let go.
+
 **The real lesson generalizes past DNS**: any host provisioned outside the normal fleet-onboarding
 flow (Terraform-only, hand-built, "I'll just get to the Ansible parity later") inherits none of
 the fleet's baseline resilience assumptions — not just this DNS fix, but monitoring, backup jobs,
