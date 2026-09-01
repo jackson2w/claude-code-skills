@@ -150,11 +150,23 @@ before trusting a cron test:**
 - Separately (not a monitor-script issue): `--deliver telegram` on a `hermes cron create` job
   can silently fail to resolve a delivery target (`hermes cron list` shows "⚠ Delivery failed:
   no delivery target resolved for deliver=telegram") even on a job that completes `ok` —
-  confirmed on this project's `weekly-fleet-report` job. Not yet root-caused. If a cron job's
-  Telegram delivery matters, verify an actual message arrives, don't trust `Execution:
-  completed` alone; `--deliver local` (or writing output to a file the job manages itself,
-  as `agent-exchange-poll` does) sidesteps the bug entirely when you don't need Hermes's own
-  delivery path.
+  confirmed on this project's `weekly-fleet-report` job. **Root-caused and fixed 2026-09-01**:
+  the bare `telegram` delivery target (and `hermes send --to telegram`) resolves against a
+  `TELEGRAM_HOME_CHANNEL` config key that's easy to miss setting during initial setup — check
+  `hermes config get TELEGRAM_HOME_CHANNEL` (chat ID visible via `hermes send --list telegram`,
+  which shows the already-paired contact even when the home-channel key itself is unset).
+  **Setting it is not enough on its own** — `hermes-gateway` reads `config.yaml` once at
+  startup and does not hot-reload, so a running gateway keeps failing until restarted
+  (`systemctl restart hermes-gateway`) after any `hermes config set`. `hermes-config-
+  install.yml` in `hermes-ansible` now restarts the gateway automatically whenever a config
+  value actually changes — model this pattern for any future `hermes config set` task rather
+  than assuming a config edit takes effect live. Verify a delivery fix via a real scheduled
+  tick (throwaway one-shot `--repeat 1` job), never a manual `hermes cron run` — same reasoning
+  as the monitor-script gotcha above, a manual trigger's own credential/env gaps can produce a
+  misleading result either way. In general: if a cron job's Telegram delivery matters, verify
+  an actual message arrives, don't trust `Execution: completed` alone; `--deliver local` (or
+  writing output to a file the job manages itself, as `agent-exchange-poll` does) is the right
+  choice whenever you don't need Hermes's own delivery path at all.
 
 ## `hermes skills` — a separate skills system from Claude Code's own
 
