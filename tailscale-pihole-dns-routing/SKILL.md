@@ -448,6 +448,44 @@ and checking it's attributed to *that host's own IP*, not the router's or absent
 query log lags real traffic by a flush interval; check `/var/log/pihole/pihole.log` instead for
 instant confirmation).
 
+### Gotcha: a host that skips this fix entirely can deadlock at cold boot, not just drift
+
+A distinct, worse failure mode from the drift bug above: a host that was **never** brought under
+this systemd-resolved setup at all — e.g. provisioned via Terraform/manual build outside the
+normal Ansible onboarding flow — has no independent resolver whatsoever. Its only DNS path is
+Tailscale's own MagicDNS stub (`100.100.100.100`), and if the tailnet's Global Nameservers point
+at tailnet-only IPs (Pi-hole's own Tailscale IP, a second resolver node, etc. — not a public
+resolver), that stub can't resolve `controlplane.tailscale.com` until the host is *already*
+logged into Tailscale. Chicken-and-egg: it needs DNS to log in, and needs to be logged in for
+DNS to work. Confirmed live 2026-09-01 (`agent-vault` LXC, homelab fleet): the host retried
+`register request: ... controlplane.tailscale.com` in an endless backoff loop for 20+ minutes
+after a host power-cycle, never self-resolving — this is genuinely stuck, not slow.
+
+**Diagnostic fingerprint**: `tailscale status` shows `offline`; `journalctl -u tailscaled` shows
+repeated `dns udp query: waiting for response or error from [<tailnet-only IPs>]: context
+deadline exceeded` interleaved with failed `register request` attempts, and often a failed
+`bootstrapDNS(...)` attempt too (tailscaled's own embedded fallback for exactly this situation,
+which can lose a race against the doomed tailnet-DNS queries eating the whole request context
+before the bootstrap attempt gets a fair shot).
+
+**Break the immediate deadlock**: temporarily point `/etc/resolv.conf` at a public resolver
+(`nameserver 1.1.1.1`) — even though Tailscale's own header says not to hand-edit this file, that
+warning is about *drift after the fix is applied*, not about breaking an active deadlock before
+any fix exists. `systemctl restart tailscaled` after. It will register with the control plane and
+reconnect within seconds once real DNS works.
+
+**Permanent fix**: apply the full systemd-resolved-pinned-to-Pi-hole setup from "The fix" section
+above to this host, exactly like any other fleet host — this gives it an independent resolver
+that works before Tailscale is connected, closing the deadlock permanently rather than requiring
+manual intervention on every future cold boot. Don't stop at breaking the immediate deadlock.
+
+**The real lesson generalizes past DNS**: any host provisioned outside the normal fleet-onboarding
+flow (Terraform-only, hand-built, "I'll just get to the Ansible parity later") inherits none of
+the fleet's baseline resilience assumptions — not just this DNS fix, but monitoring, backup jobs,
+and drift-detection coverage too. It's invisible to every host-list-driven check until someone
+explicitly closes that gap. Treat "provisioned outside the normal flow" as a standing flag to
+check every touchpoint a normal host gets automatically, not just the one that happened to bite.
+
 ## The router-relay trap: DHCP handing out the router's own IP instead of Pi-hole's
 
 Separately from anything Tailscale-related: if a router's DHCP server hands out **its own IP**
