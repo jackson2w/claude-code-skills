@@ -123,6 +123,39 @@ then check `~/.hermes/cron/output/<job-id>/*.md` for the actual rendered prompt 
 this project caught a version-drift discrepancy (an LLM-reported n8n version newer than the last
 confirmed-live one) this way, worth a quick sanity skim even on a "successful" test run.
 
+**Two real gotchas found building the agent-exchange channel (2026-09-01), both worth checking
+before trusting a cron test:**
+
+- **`hermes cron run <id>` invoked via a manual `su hermes -c '...'` (or any shell outside the
+  running `hermes-gateway` process) does not have that process's environment** —
+  `EnvironmentFile=/home/hermes/.hermes/gateway.env` is only sourced by systemd at the
+  gateway's own launch, and that file carries `HTTPS_PROXY`/`HTTP_PROXY` pointing at Agent
+  Vault's MITM listener plus its CA-trust env vars (`REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
+  etc. — see the `agent-vault-credential-broker` skill). A manually-triggered run makes real,
+  unproxied calls straight to the model provider with no credential, and fails with a plain
+  auth error (`401`, "provide your API key") that looks like a broken cron job rather than a
+  test-methodology artifact. Same failure shape as the documented `EnvironmentFile=` gotcha in
+  the global CLAUDE.md ("a script tested by direct invocation instead of `systemctl start`
+  silently runs with zero credentials"), just one layer further removed since the credential
+  here is injected at the network layer, not the process env directly.
+- **For a `--monitor-script` job specifically, that same manual `hermes cron run` still executes
+  the monitor-script check before failing** — so it updates the scheduler's "last known output"
+  baseline even though the agent turn itself errors out. The *next real scheduled tick* then
+  sees "no change" against that stale-but-recorded baseline and silently suppresses the agent
+  run entirely (`cron.scheduler: monitor output unchanged — suppressing agent run` in
+  `~/.hermes/logs/agent.log`) — the real trigger that prompted your test never actually gets
+  processed, with no error anywhere. **Never manually `hermes cron run` a `--monitor-script`
+  job to test it.** Wait for a real scheduled tick, or check `~/.hermes/logs/agent.log` for
+  `monitor output unchanged` after a manual trigger to confirm whether this happened.
+- Separately (not a monitor-script issue): `--deliver telegram` on a `hermes cron create` job
+  can silently fail to resolve a delivery target (`hermes cron list` shows "⚠ Delivery failed:
+  no delivery target resolved for deliver=telegram") even on a job that completes `ok` —
+  confirmed on this project's `weekly-fleet-report` job. Not yet root-caused. If a cron job's
+  Telegram delivery matters, verify an actual message arrives, don't trust `Execution:
+  completed` alone; `--deliver local` (or writing output to a file the job manages itself,
+  as `agent-exchange-poll` does) sidesteps the bug entirely when you don't need Hermes's own
+  delivery path.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
