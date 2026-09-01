@@ -214,6 +214,79 @@ fully fix it either — the copy then chokes trying to copy live Unix sockets (`
 just that one plugin and works fine. Don't take a bare `hermes plugins doctor` failure as
 evidence a specific plugin is broken — check whether it was even given a target first.
 
+## Forcing approval for a command the built-in detector won't flag
+
+**Confirmed 2026-09-01.** Hermes's `approvals.mode` (even `smart`) is only ever consulted for a
+`terminal` command that first matches `tools.approval.DANGEROUS_PATTERNS` — a fixed regex list
+looking for known-risky shapes (`rm -rf`, `systemctl restart/stop`, `git push --force`, `chmod
+777`, etc.). There is no catch-all for "this command does something opaque/remote that I can't
+reason about" — a command like `ssh host "sudo /usr/local/bin/some-custom-script.sh restart
+nginx"` never matches any pattern (no `systemctl` substring, no `rm`, nothing recognizable), so
+`detect_dangerous_command()` returns `False` and the entire approval gate — including
+`smart_policy`, which is only read *inside* the gate — is skipped by construction. This bit a
+real deployment: two homelab dispatch scripts (`hermes-fleet-admin-changes.sh`,
+`hermes-dfw-admin-changes.sh`) had been executing with zero approval for their entire lifetime,
+despite every doc claiming otherwise, because SSHing to a custom script name doesn't look
+"dangerous" to the pattern list. `approvals.smart_policy` (a config string appended to the
+guardian LLM's system prompt) **cannot fix this** — it's a dead end for any command the pattern
+list never routes to the guardian in the first place.
+
+**The fix: a `pre_tool_call` plugin hook.** Hermes's plugin system lets a hook run before any
+tool call and return `{"action": "approve", "message": "..."}`, which escalates through
+`tools.approval.request_tool_approval()` — the exact same human-approval gate dangerous shell
+patterns use (session/`[o]nce`/`[s]ession`/`[a]lways`/`[d]eny`, cron/single-query/unattended
+context handling, fail-closed when no human is present) — regardless of whether the built-in
+detector flagged anything. This is Hermes's own documented answer for exactly this situation;
+don't try to hand-patch the vendored `DANGEROUS_PATTERNS` list in `/usr/local/lib/hermes-agent/`
+instead (fragile, and wiped on `hermes update`).
+
+Minimal recipe (see `homelab-changes-approval` for a real deployed example, or the bundled
+`security-guidance` plugin at `/usr/local/lib/hermes-agent/plugins/security-guidance/` for
+another reference shape):
+
+```
+~/.hermes/plugins/<plugin-name>/
+├── plugin.yaml      # name, version, description, provides_hooks: [pre_tool_call]
+└── __init__.py      # register(ctx): ctx.register_hook("pre_tool_call", fn)
+```
+
+```python
+def _on_pre_tool_call(tool_name="", args=None, **_):
+    if tool_name != "terminal":          # the shell/exec tool's name
+        return None
+    command = (args or {}).get("command")
+    if not isinstance(command, str) or not MY_PATTERN.search(command):
+        return None
+    return {"action": "approve", "message": "Why this needs a human to confirm"}
+```
+
+Notes:
+- `tool_name == "terminal"` and `args["command"]` is the shell tool's actual shape — verified by
+  reading `tools/terminal_tool.py`'s tool registration, not assumed.
+- Omit `rule_key` unless you want a specific `[a]lways` allowlist grain; the default derives a
+  key from `tool_name` + a hash of `message`, so distinct messages (e.g. one per matched command
+  string) get independent `[a]lways` entries rather than one blanket bypass for the whole
+  category.
+- Deploy the same way as a skill: a small Ansible playbook (`ansible.builtin.copy` for each
+  file, `validate: "python3 -c \"import ast; ast.parse(open('%s').read())\""` on `__init__.py`)
+  plus a task running `hermes plugins enable <name> --no-allow-tool-override` guarded by `when:
+  "'<name>' not in <hermes config get plugins.enabled output>"`, and a gateway-restart handler.
+  No `capabilities:` entry needed for a plain `pre_tool_call` hook (that's only for
+  `tools.override`/LLM-override surfaces).
+- Validate with `hermes plugins doctor <plugin-name>` (targeted mode — see the /tmp-exhaustion
+  gotcha above) before trusting it's wired; `hermes plugins show <name>` should report `Status:
+  enabled`.
+- This kind of fix enforces at the tool-executor layer regardless of the live chat session's own
+  context/skill-awareness, unlike a skill-content change — see "gateway restart does not reset
+  live chat session" above for why that distinction matters for whether a live-chat nudge is
+  also needed.
+- **The one thing SSH-based testing as `will`/root can never verify**: whether a real
+  interactive-session invocation actually produces a live Telegram approval prompt. Manually
+  SSHing in and running the command never goes through Hermes's own tool-call loop, so it can't
+  exercise the approval path at all — only a genuine live agent turn (a real Telegram message
+  asking Chuka to do the thing) proves the plugin fires in practice, not just that it registers
+  cleanly.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
