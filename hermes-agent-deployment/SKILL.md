@@ -193,6 +193,15 @@ the gap is discovery, not capability. If a live session genuinely needs to be re
 loses its conversational context), that's a different, more disruptive action; don't reach for
 it just to pick up a new skill.
 
+**Recurred 2026-09-01 with a different capability** (first was the agent-exchange channel;
+second was the dfw `hermes-dfw-admin-changes.sh` restart/trigger script added the same day) —
+treat this as a standing pattern, not a one-off: any deploy that updates a skill the live chat
+would need to know about should be followed by an explicit "here's what's new" message into the
+live session, every time, not just the first time this bit someone. Distinguish this from a
+`pre_tool_call`-hook plugin (e.g. `homelab-changes-approval`): that kind of change enforces at
+the tool-executor layer regardless of what the live session's own context knows, so it does NOT
+need this same nudge — only skill/doc *content* the model is expected to reason from does.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
