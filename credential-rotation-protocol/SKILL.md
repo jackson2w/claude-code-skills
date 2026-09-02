@@ -14,6 +14,26 @@ the next leak just needs a fourth mechanism nobody thought to ban yet. This skil
 verification *never requires seeing the secret's actual value*, full stop, regardless of which
 command someone reaches for.
 
+## A mechanical backstop now exists, but don't rely on it alone
+
+As of 2026-09-02, `~/.claude/hooks/block-credential-dump.sh` (wired into `~/.claude/settings.json`
+as a global `PreToolUse` hook on `Bash`) hard-blocks `cat`/`less`/`head`/`tail`/etc. against a
+path matching credential-shaped keywords (`.env`, `credential`, `secret`, `password`, `token`,
+`.ssh/`, `id_rsa`/`id_ed25519`, `.pem`/`.pfx`/`.p12`) — including through an SSH wrapper
+(`ssh host 'cat ...'`), which is the exact shape of the incident this skill was born from. This
+is the actual mechanical rule the "prose guidance alone isn't sufficient" note below was asking
+for. It stays permissive for the safe patterns in the table below (`cut -d=`, `grep -c`, `wc -l`,
+`ls -la`, checksums, `ansible-vault`).
+
+**Don't treat it as a substitute for the discipline in this skill** — it's a string-match
+heuristic on the Bash command, not a parser: it won't catch `bash -x`/`set -x` on a script that
+sources a credential file, a Python/Node one-liner that reads and prints a file's content, or any
+non-Bash tool path. It also has real false positives — it'll flag a `cat` of a file whose *name*
+merely contains "secret" or "credential" even when the file holds no live secret (e.g. this
+project's own memory files, like `feedback_secret_exposure_addition_not_subtraction.md`) — use
+the Read tool for those instead of fighting the hook, since Read isn't gated by it and is the
+right tool for plain file reads anyway.
+
 ## The hard rule
 
 **Before running any command whose target is a credential-bearing file, or any host/service

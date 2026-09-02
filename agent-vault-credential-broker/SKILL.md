@@ -75,6 +75,52 @@ If the LXC/VM is unprivileged and needs Tailscale, the standard TUN-passthrough 
 (`lxc.cgroup2.devices.allow`/`lxc.mount.entry` + full stop/start, not a service restart) — not
 specific to Agent Vault, covered generically elsewhere in this environment's Proxmox skills.
 
+## Rotating `AGENT_VAULT_MASTER_PASSWORD`
+
+Confirmed working end-to-end 2026-09-02. The master password is a KDF input (Argon2id) for a KEK
+that wraps the DEK, which uniformly encrypts every stored credential — per the vendor's own
+security docs, rotating it via the proper command is "a single database update with zero
+credential re-encryption." It is **not** the same credential as the web UI/CLI owner-account
+login (`agent-vault auth register`/`auth login`, a normal human email+password) — the two are
+structurally independent; rotating one has zero effect on the other.
+
+**Procedure** (single-instance SQLite, this project's deployment shape — no `DATABASE_URL` set):
+1. `agent-vault master-password change` **refuses to run while the server is active** ("server is
+   running (PID ...) -- stop it first"). Stop it via the process manager actually supervising it
+   (`systemctl stop agent-vault.service` here), not `agent-vault server stop` directly, to avoid
+   racing systemd's own restart handling.
+2. Run `agent-vault master-password change` — interactive prompts for current password, then new
+   (twice, to confirm). `--force` is only for PostgreSQL multi-instance setups with all instances
+   stopped; not needed here.
+3. Update the systemd `EnvironmentFile` (`/root/.config/agent-vault.env` here) so
+   `AGENT_VAULT_MASTER_PASSWORD=` matches **exactly** what was just set at the prompt.
+4. `systemctl start agent-vault.service`, then `systemctl status` — confirm `active (running)`,
+   not `activating (auto-restart)`.
+
+**Real gotcha hit doing this**: after rotating, the service crash-looped (`systemctl status`
+showed `activating (auto-restart)`, exit code 1; `journalctl -u agent-vault.service` showed a
+plain `wrong password` error). Root cause was a copy/typo mismatch between the password actually
+set at the interactive prompt and what ended up written into the env file — they're typed/pasted
+independently, so nothing catches a mismatch until the next start attempt. **Minimize this
+surface**: generate the new password once, copy it via clipboard into both the CLI prompt and the
+env file rather than re-typing/re-pasting separately, and don't consider the rotation done until
+`systemctl status` shows a clean `active (running)` with no restart-loop.
+
+**Verifying no data was lost, without touching any live credential value**: `agent-vault catalog
+--json` is the wrong command for this — it's the static built-in *reference* list of supported
+providers (Anthropic, OpenAI, GitHub, Cloudflare, etc.), not what's actually configured in your
+vaults. Use `agent-vault vault list` (requires successfully decrypting the DB to run at all — its
+mere success is already evidence the rotation worked) and `agent-vault vault service list --vault
+<name>` for each vault, which prints service names/hosts/auth-type/header-or-token-*key-name*
+metadata — never the actual credential values — confirming every configured service survived the
+rotation intact.
+
+**If you don't know the current password**: it's sitting in the systemd `EnvironmentFile` in
+plaintext (`/root/.config/agent-vault.env` here) — have the human read it directly in their own
+terminal (`cat` on that file, or any credential file, is exactly what
+`~/.claude/hooks/block-credential-dump.sh` — see the `credential-rotation-protocol` skill — now
+hard-blocks Claude Code itself from doing).
+
 ## CLI workflow
 
 1. **Owner account**: the first person to `agent-vault auth register` (web UI or CLI) becomes
