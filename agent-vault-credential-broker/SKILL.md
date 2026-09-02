@@ -1,6 +1,6 @@
 ---
 name: agent-vault-credential-broker
-description: This skill should be used when deploying or debugging Infisical's Agent Vault (a self-hosted, research-preview credential broker that intercepts an agent's outbound HTTPS calls via a local MITM proxy and injects real API keys so the agent process never holds them) — including provisioning a new instance, wiring it in front of an existing agent (OpenClaw, Hermes, a coding agent), the `agent-vault` CLI (vault/service/agent/run subcommands), or debugging a broken cutover. Trigger phrases include "agent vault", "credential broker", "get.agent-vault.dev", "agent-vault run", "AGENT_VAULT_TOKEN", "AGENT_VAULT_ADDR", "AGENT_VAULT_VAULT", "mitm-ca.pem", "agent-vault server", "unmatched_host_policy", "openclaw-on-vps.mdx", "hermes-on-vps.mdx", "placeholder api key vault", "__anthropic_api_key__", "Failed to set up mount namespacing", "agent process never holds credential", "MITM proxy inject api key", "vault service add catalog".
+description: This skill should be used when deploying or debugging Infisical's Agent Vault (a self-hosted, research-preview credential broker that intercepts an agent's outbound HTTPS calls via a local MITM proxy and injects real API keys so the agent process never holds them) — including provisioning a new instance, wiring it in front of an existing agent (OpenClaw, Hermes, a coding agent), the `agent-vault` CLI (vault/service/agent/run subcommands), or debugging a broken cutover. Trigger phrases include "agent vault", "credential broker", "get.agent-vault.dev", "agent-vault run", "AGENT_VAULT_TOKEN", "AGENT_VAULT_ADDR", "AGENT_VAULT_VAULT", "mitm-ca.pem", "agent-vault server", "unmatched_host_policy", "openclaw-on-vps.mdx", "hermes-on-vps.mdx", "placeholder api key vault", "__anthropic_api_key__", "Failed to set up mount namespacing", "agent process never holds credential", "MITM proxy inject api key", "vault service add catalog", "netguard blocked by network policy", "AGENT_VAULT_NETWORK_ALLOWLIST", "AGENT_VAULT_ALLOW_PRIVATE_RANGES", "agent vault 502 internal host", "agent vault tailnet private ip blocked".
 ---
 
 # Agent Vault (Infisical) — credential broker for agent processes
@@ -231,9 +231,49 @@ The heavy lift (firewall widening, CA cert, proxy env wiring) is one-time per ag
 3. `agent-vault vault credential set KEY=<value>` on the vault host, never relayed through the
    agent.
 4. Add only the placeholder to the agent's own env file (e.g. `NEW_KEY=__new_key__`) — the
-   existing `HTTPS_PROXY`/firewall wiring already covers any new outbound host, no repeat of the
-   firewall/CA/systemd phases.
+   existing `HTTPS_PROXY`/firewall wiring already covers any new outbound **public-internet**
+   host, no repeat of the firewall/CA/systemd phases. **If the new host is internal/tailnet-only
+   (not on the public internet), see "netguard blocks private IP ranges by default" below first**
+   — it needs one more step the public-host case doesn't.
 5. Restart the agent's gateway service to pick up the new placeholder.
+
+## netguard blocks private/internal IP ranges by default — a real gap for tailnet-only services
+
+Agent Vault has a built-in SSRF-protection layer ("netguard", undocumented in the top-level
+README/guides as of 2026-09-01 — found by grepping symbol strings out of the binary, confirmed
+via `docs.agent-vault.dev/self-hosting/environment-variables.md`) that blocks the MITM proxy from
+dialing private/reserved IP ranges (RFC-1918, loopback, link-local, IPv6 ULA, **CGNAT — this
+includes Tailscale's own `100.64.0.0/10` range**) by default
+(`AGENT_VAULT_ALLOW_PRIVATE_RANGES=false`). Cloud metadata endpoints stay blocked regardless of
+this setting. Every credential this project brokered before Home Assistant (Anthropic, OpenAI,
+Groq, LunaRoute, Telegram) was a public-internet host, so this never came up — the first
+tailnet-only service hit it immediately, producing a plain `502` on the client side with **no
+hint in the default-level logs at all**. Confirmed live 2026-09-01 (hermes-agent → Home
+Assistant, `homeassistant.tail922cee.ts.net` → `100.116.152.84`), full incident in
+[[project_agent_vault_hermes_migration]].
+
+**Diagnosis**: bump logging to see it — add a temporary systemd drop-in
+(`ExecStart=` cleared then re-specified with `--log-level debug`), `daemon-reload`, restart,
+reproduce the failing request, then `journalctl -u agent-vault`. The real error only shows at
+debug level: `netguard: connection to <host> (<ip>) blocked by network policy`. Remove the
+drop-in and restart back to normal (default `info`) once diagnosed — debug level logs full
+per-request proxy details continuously, not something to leave on.
+
+**Fix**: add the destination's IP to `AGENT_VAULT_NETWORK_ALLOWLIST` in
+`/root/.config/agent-vault.env` on the broker host (comma-separated bare IPs or CIDRs — this env
+var is only consulted when `AGENT_VAULT_ALLOW_PRIVATE_RANGES=false`, the correct default to leave
+alone). **Allowlist the specific IP, not the whole Tailscale CGNAT range** — a shared
+multi-tenant broker instance serving more than one agent/vault (this project's does: `dfw` +
+`hermes`) shouldn't have its SSRF protection loosened tailnet-wide just because one service on
+one vault needs one internal host; that defeats the point of the guard for every other vault on
+the same instance. Restart `agent-vault.service` to apply. Tailscale IPs are normally stable
+per-device, but a future identity-churn event (device remove/re-add — see the
+`tailscale-pihole-dns-routing` skill) could change it, requiring the allowlist entry to be
+updated to match.
+
+**Any future internal/tailnet-only credential on any vault on this broker needs this same step**
+— it's not specific to Home Assistant, just the first time this category of destination was
+exercised.
 
 ## Claude Code's own classifier and this workflow
 

@@ -1,6 +1,6 @@
 ---
 name: hermes-agent-deployment
-description: This skill should be used when deploying or debugging a self-hosted Hermes Agent (Nous Research's self-hosted personal-assistant gateway bridging Telegram/WhatsApp/Slack/Discord to an LLM with tool/skill/cron access — Will calls his instance "Chuka") — including install via the `hermes` CLI, the `hermes-gateway.service` systemd unit, native `hermes cron` scheduled jobs, the `hermes skills` system (SKILL.md drop-in files distinct from Claude Code's own skills), Debian 13 install gotchas (python3.13-venv, broken IPv6/gai.conf), fleet-readonly SSH access design, or UID-scoped egress firewalling. For credential protection via Agent Vault specifically, see the separate `agent-vault-credential-broker` skill — this skill covers Hermes's own deployment, not the broker. Trigger phrases include "hermes agent", "hermes gateway", "hermes cli", "hermes cron create", "hermes skills list", "hermes-gateway.service", "hermes mcp install", "ensurepip is not available", "HERMES_HOME", "hermes gateway install --system", "chuka", "hermes_cli.main gateway run", "LunaRoute glm-5.3-flash", "hermes fleet access", "hermes-remote", "hermes_egress table".
+description: This skill should be used when deploying or debugging a self-hosted Hermes Agent (Nous Research's self-hosted personal-assistant gateway bridging Telegram/WhatsApp/Slack/Discord to an LLM with tool/skill/cron access — Will calls his instance "Chuka") — including install via the `hermes` CLI, the `hermes-gateway.service` systemd unit, native `hermes cron` scheduled jobs, the `hermes skills` system (SKILL.md drop-in files distinct from Claude Code's own skills), Debian 13 install gotchas (python3.13-venv, broken IPv6/gai.conf), fleet-readonly SSH access design, or UID-scoped egress firewalling. For credential protection via Agent Vault specifically, see the separate `agent-vault-credential-broker` skill — this skill covers Hermes's own deployment, not the broker. Trigger phrases include "hermes agent", "hermes gateway", "hermes cli", "hermes cron create", "hermes skills list", "hermes-gateway.service", "hermes mcp install", "ensurepip is not available", "HERMES_HOME", "hermes gateway install --system", "chuka", "hermes_cli.main gateway run", "LunaRoute glm-5.3-flash", "hermes fleet access", "hermes-remote", "hermes_egress table", "hermes gateway setup selector drops to done", "hermes setup tools", "hermes homeassistant setup not prompting", "aiohttp trust_env proxy bypass", "hermes update reverted patch", "uv pip install no pip module hermes venv".
 ---
 
 # Hermes Agent deployment
@@ -321,6 +321,63 @@ up the UID at deploy time via `getent`, never hardcode it — this project's `he
 999, no reason to assume it matches another host's service account. Diagnostic signature for a
 missing rule: a **TCP timeout** (not "connection refused") from this specific UID, easily
 mistaken for a Tailscale ACL or destination-side problem.
+
+## `hermes gateway setup` vs `hermes setup tools` — two different config surfaces, easy to confuse
+
+`hermes gateway setup` configures messaging **platforms** (Telegram, WhatsApp, Signal, Discord,
+...). `hermes setup tools` (or `hermes setup` → tools section) configures **tools** the agent can
+call (Smart Home/Home Assistant, browser backends, Spotify, computer-use, ...) — a materially
+different registry with its own `env_vars`/provider schema in `hermes_cli/tools_config.py`.
+
+**Confirmed 2026-09-01**: Home Assistant appears in `gateway setup`'s platform picker
+(`platform_toolsets.homeassistant`), but that registry entry has **no `setup_fn` and no `vars`
+schema** — selecting it falls through to `_configure_platform()`'s generic no-op path
+(`hermes_cli/gateway.py`), which just prints a static banner (`Set these env vars in
+~/.hermes/.env: HASS_TOKEN` / a hardcoded `pip install aiohttp` hint) and returns immediately —
+this looks exactly like a broken interactive picker (the cursor "drops to Done" on selection, no
+matter what key you press) but is actually working as designed; there's no real flow at that
+menu entry at all, for any input. The `pip install aiohttp` hint is unconditional static text,
+not a live dependency check — don't chase it as a lead.
+
+The **real** Home Assistant setup path is `hermes setup tools` → "Configure all platforms
+(global)" → Smart Home category → Home Assistant → REST API integration, which has a genuine
+`env_vars` schema (`HASS_TOKEN` prompt, `HASS_URL` prompt defaulting to
+`http://homeassistant.local:8123`) and actually asks. Saves to `~/.hermes/config.yaml` (toolset
+enablement) + `~/.hermes/.env` (the two vars) and needs `systemctl restart hermes-gateway` to
+take effect (the wizard itself can't restart a **system**-installed gateway service — it's
+root-owned, the wizard runs as the unprivileged `hermes` user — it'll tell you to `sudo systemctl
+restart hermes-gateway` yourself, which is expected, not a bug).
+
+If a `hermes setup <platform>` menu entry behaves like this (silently no-ops back to the picker
+on selection, prints only a passive env-var banner), check `hermes_cli/tools_config.py` for a
+matching entry under a *different* top-level `hermes setup` section before assuming a UI bug —
+Hermes splits "platforms I receive messages from" and "tools I can call" into genuinely separate
+config surfaces that happen to share overlapping labels (e.g. "homeassistant" exists as both a
+disabled-by-default platform key *and* a tools-category key).
+
+## Local source patches don't survive `hermes update` — check after every update
+
+The install is an **editable pip install** (`/usr/local/lib/hermes-agent`, venv at
+`/usr/local/lib/hermes-agent/venv`, `uv`-managed — no `pip` module in it; use `uv pip install
+--python <venv>/bin/python <pkg>`, run from a directory the invoking user can actually read, not
+`/root`, or `uv` fails trying to discover `uv.toml`/`pyproject.toml` config by walking up from
+CWD). Any local edit to files under `/usr/local/lib/hermes-agent/` (not `~/.hermes/` — that's
+config/data, safe) is a patch to vendor source, not IaC-tracked, and **will silently vanish on
+the next `hermes update`** with no warning.
+
+Confirmed real case, 2026-09-01: `tools/homeassistant_tool.py` (4 call sites) and
+`plugins/platforms/homeassistant/adapter.py` (5 call sites) construct bare
+`aiohttp.ClientSession()` with no `trust_env=True` — unlike Hermes's own LLM-provider calls
+(routed through a shared `httpx`-based client in `agent/process_bootstrap.py` that explicitly
+honors `HTTPS_PROXY`/`NO_PROXY`), aiohttp **ignores proxy env vars by default**, so this silently
+bypassed Agent Vault's credential-injection proxy entirely and sent a raw placeholder token
+straight to Home Assistant — a real 401, not a broker bug. Patched locally by adding
+`trust_env=True` to all 9 sites. **After any future `hermes update`, re-check**: `grep -c
+trust_env /usr/local/lib/hermes-agent/tools/homeassistant_tool.py
+/usr/local/lib/hermes-agent/plugins/platforms/homeassistant/adapter.py` should show 4 and 5 —
+if either drops, the update reverted the patch and any vault-brokered credential routed through
+that tool will silently start bypassing the proxy again. Worth filing upstream to Nous Research
+too (same spirit as OpenClaw's known-upstream-bug pattern, `openclaw/openclaw#128314`).
 
 ## Telegram identity
 
