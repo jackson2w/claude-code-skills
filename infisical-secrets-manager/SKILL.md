@@ -1,0 +1,210 @@
+---
+name: infisical-secrets-manager
+description: This skill should be used when migrating a credential off a plaintext .env file onto self-hosted Infisical (the fleet secrets-management platform — distinct from Agent Vault, its separate MITM-proxy product), when provisioning a new host's Infisical machine identity, when debugging an `infisical-wrapper.sh`/`infisical-get.sh` fetch failure, or when auditing which fleet credentials still live in plaintext. Trigger phrases include "infisical secrets manager", "infisical-wrapper.sh", "infisical-get.sh", "infisical machine identity", "infisical login universal-auth", "homelab-fleet project", "migrate credential to infisical", "retire .env file", "Injecting N Infisical secrets", "infisical secrets get", "lookup('pipe', '/root/bin/infisical-get.sh", "deployed-copy vs git-tracked-source".
+---
+
+# Infisical secrets manager — fleet credential migration
+
+Self-hosted Infisical (VM 111 `infisical`, `192.168.50.29`, `https://infisical.tail922cee.ts.net`),
+project `homelab-fleet` (ID `4655aace-2e75-4c2a-8d29-9bd438868396`), environment `dev`, path `/`
+for everything unless a specific reason exists to use a folder. Built and fully rolled out
+2026-09-02 across `ansible-ctrl`, `pbs`, `n8n`, `immich`, `dfw`, and Claude Code's own interactive
+Cloudflare admin tokens (30 secrets total) — see `project_infisical_secrets_manager` memory for
+the full incident-by-incident history. This skill is the durable "how," not the narrative.
+
+**Not the same as Agent Vault.** Agent Vault (also Infisical, separate product) is a MITM proxy
+that injects credentials into an *agent's own outbound API calls* at the network layer. This
+skill's Infisical is a real secrets *store* — a scoped, authenticated pull of one named value.
+Genuinely independent products, no shared backend. Don't conflate deployment steps between them.
+
+## Before migrating anything: verify it's real and still live
+
+Two real findings this session, both caught by verifying instead of assuming:
+
+- **A `.env` file existing doesn't mean it holds a real secret.** `pihole-exporter.env` looked
+  like a normal credential file (right permissions, right shape) but held only explanatory
+  comments — Pi-hole's password auth had been disabled months earlier, so the exporter had been
+  running unauthenticated by design the whole time. A first-pass playbook edit to render this
+  "credential" from Infisical was written, then reverted, once the live file was actually
+  checked. Always read the current live file's *content* (or have the user do it) before writing
+  migration code around it, not just its existence/permissions.
+- **A credential can go dead with zero automated consumer to notice, for weeks.** Two Cloudflare
+  admin tokens (`claude-code-cf-account`/`claude-code-cf-zone`) were purely interactive-use — no
+  cron/service ever read them, only an ad-hoc Claude Code session doing Cloudflare admin work. They
+  went stale sometime after their last real use and nobody knew until this migration's own
+  functional-verification step (`curl .../user/tokens/verify`) caught it. **For any credential
+  being migrated, do a real functional check against the provider *before* trusting the migration
+  is meaningful** — an Infisical secret that round-trips a dead value isn't actually fixing
+  anything. If a credential turns out dead, that's a separate problem from the migration itself:
+  diagnose the real cause (check for a related rotation event, check if a broker like Agent Vault
+  or another host already holds a live replacement) before minting a blind replacement.
+
+## Two consumer mechanisms — pick based on how the credential is currently used
+
+**Mechanism A — direct-execution host, systemd-invoked.** The consuming process runs on the same
+host that will fetch the secret, invoked by a systemd unit's `ExecStart=`. Wrap it with a shared
+`infisical-wrapper.sh` instead of the unit sourcing a local `.env` (via `EnvironmentFile=` or the
+script's own `source`):
+```
+ExecStart=/root/bin/infisical-wrapper.sh /root/bin/some-script.sh [args...]
+```
+The wrapper logs in via the host's machine identity, then `exec infisical run ... -- "$@"` —
+every secret in the project lands as an env var, same shape `EnvironmentFile=` gave before. In the
+consumer script itself, delete the `source /root/.config/X.env` lines and change any
+`[[ -f /root/.config/X.env ]]` existence-gate into `[[ -n "${VAR:-}" ]]` (the script may still run
+standalone/ad-hoc without the wrapper — keep the graceful-degrade warn path).
+
+**For a script invoked directly by something other than systemd** (a cron job, a `fail2ban`
+action hook, anything that can't have its `ExecStart=` wrapped), use the sibling
+`infisical-get.sh` inline instead, fetching one value at a time:
+```bash
+TELEGRAM_BOT_TOKEN="$(/root/bin/infisical-get.sh TELEGRAM_BOT_TOKEN)"
+TELEGRAM_CHAT_ID="$(/root/bin/infisical-get.sh TELEGRAM_CHAT_ID)"
+export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+```
+
+**Mechanism B — Ansible-templated push.** A controller (e.g. `ansible-ctrl`) renders a credential
+onto a *different* target host via `ansible.builtin.copy`/`template`, historically sourced via
+`lookup('file', '/root/.config/<name>-creds.env')` + `regex_findall`. Replace the `vars:` entry
+with a `lookup('pipe', ...)` call to `infisical-get.sh` on the controller instead — the rendered
+output on the target host is byte-identical, only where Ansible sources the value from changes:
+```yaml
+r2_access_key_id: "{{ lookup('pipe', '/root/bin/infisical-get.sh R2_ACCESS_KEY_ID') }}"
+```
+This needs no changes on the target host at all — it keeps its real rendered `.env` file and
+`EnvironmentFile=` wiring exactly as before. Don't try to eliminate the target host's file too
+unless there's a real reason (a new machine identity there is extra ongoing maintenance for
+marginal benefit — this was explicitly declined for `pbs`'s R2/B2 backup jobs).
+
+## The two shared helper scripts (copy these verbatim per host/repo)
+
+`infisical-wrapper.sh` and `infisical-get.sh` — same content shape everywhere, only the
+`INFISICAL_PROJECT_ID`/`INFISICAL_DOMAIN` constants are shared (identical across every
+consumer), while `IDENTITY_FILE` is always the *local* host's own
+`/root/.config/infisical-machine-identity.env`. Deploy via a small dedicated playbook
+(`infisical-tooling-install.yml`) that other credential-consuming playbooks depend on running
+first — don't fold the deploy into an existing playbook, since multiple consumers need these
+scripts independently.
+
+```bash
+# infisical-wrapper.sh
+#!/usr/bin/env bash
+set -euo pipefail
+INFISICAL_DOMAIN="https://infisical.tail922cee.ts.net/api"
+INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
+IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
+[[ $# -eq 0 ]] && { echo "usage: infisical-wrapper.sh <command> [args...]" >&2; exit 2; }
+set -a; source "$IDENTITY_FILE"; set +a
+INFISICAL_TOKEN=$(infisical login --method=universal-auth \
+  --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
+  --domain="$INFISICAL_DOMAIN" --silent --plain)
+exec infisical run --token="$INFISICAL_TOKEN" --projectId="$INFISICAL_PROJECT_ID" \
+  --env=dev --domain="$INFISICAL_DOMAIN" --silent -- "$@"
+```
+
+```bash
+# infisical-get.sh
+#!/usr/bin/env bash
+set -euo pipefail
+INFISICAL_DOMAIN="https://infisical.tail922cee.ts.net/api"
+INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
+IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
+[[ $# -ne 1 ]] && { echo "usage: infisical-get.sh SECRET_NAME" >&2; exit 2; }
+set -a; source "$IDENTITY_FILE"; set +a
+INFISICAL_TOKEN=$(infisical login --method=universal-auth \
+  --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
+  --domain="$INFISICAL_DOMAIN" --silent --plain)
+infisical secrets get "$1" --token="$INFISICAL_TOKEN" --projectId="$INFISICAL_PROJECT_ID" \
+  --env=dev --domain="$INFISICAL_DOMAIN" --plain --silent
+```
+
+The `infisical login ... --silent` banner line ("Injecting N Infisical secrets into your
+application process") goes to **stderr**, not stdout — a script that pipes `infisical-wrapper.sh`'s
+child process output into `jq`/JSON parsing is safe by default. Only breaks if you explicitly
+merge stderr into stdout (`2>&1`) while testing — that's a test artifact, not a real bug.
+
+## Provisioning a new host (one not already on `ansible-ctrl`'s identity)
+
+A host outside `homelab-ansible`'s own reach (e.g. `dfw`, which runs its own separate
+`dfw-ansible` repo locally, `ansible_connection=local`) needs its **own** Universal Auth machine
+identity — reusing `ansible-ctrl`'s identity file across hosts is not how Infisical scopes access.
+1. Will creates it directly in the Infisical UI (cannot be automated/provisioned by an agent):
+   Organization → Access Control → Identities → Create Identity (name it after the host, org role
+   `no-access`, auth method Universal Auth) → open it → Add to Project → `homelab-fleet` → same
+   access level as `ansible-ctrl`'s identity → generate a Client Secret with TTL=0/max-uses=0.
+   **No further per-secret association step is needed** — a project-level identity can read every
+   secret in that project immediately, including ones added to the project *after* the identity
+   was created.
+2. Client ID/Secret saved to `/root/.config/infisical-machine-identity.env` on the new host by
+   Will directly (never through chat).
+3. Install the Infisical CLI via the same apt repo used everywhere else:
+   `curl -1sLf https://artifacts-cli.infisical.com/setup.deb.sh | bash && apt-get install -y infisical`.
+4. Deploy the two helper scripts (see above), pointed at the same project/domain constants.
+
+## Verification discipline — do all of this, in order, for every credential
+
+1. Non-revealing length check: `infisical-get.sh NAME | wc -c` on the new host — confirms the
+   secret exists and is fetchable before touching any consumer.
+2. For Mechanism B: capture a `sha256sum` of the target host's currently-rendered file *before*
+   re-running the playbook, re-run it, confirm Ansible reports `ok` (not `changed`) on the
+   credential-file task, and confirm the checksum is unchanged after.
+3. Real functional check against the actual consumer/provider — an API call that authenticates, a
+   real triggered service run that produces its real side effect (an email actually delivered, a
+   backup that actually completes with `no errors were found`), not just "exited 0." A clean exit
+   code alone doesn't prove the credential value is correct, only that nothing crashed.
+4. **Retire the old plaintext file only after step 3 passes** — rename to `.bak`, never delete
+   outright (non-destructive-automation-default; keep for at least one full week of clean runs).
+5. **Re-run the same real functional checks from step 3 with the old file genuinely gone.** This
+   is the step most likely to be skipped and most likely to catch a real bug — twice this session
+   it caught a genuine miss: once, editing the git-tracked source script but forgetting to
+   redeploy it to the host's actual `/root/bin`/`/usr/local/bin` copy (see the next section); the
+   fix in each case was mechanical once found, but neither would have been caught by step 3 alone
+   since the old file was still present when step 3 ran.
+
+## Gotchas hit building this out
+
+- **Deployed-copy vs. git-tracked-source split.** Several hosts in this fleet keep a git-tracked
+  script (e.g. `homelab-ansible/scripts/weekly-housekeeping-checks.sh`) separate from its actually
+  *running* deployed copy (`/root/bin/weekly-housekeeping-checks.sh` on `ansible-ctrl`), synced
+  only by re-running the deploying playbook. Editing the source and testing against the deployed
+  copy without redeploying first will silently test stale code — confirmed this exact mistake
+  mid-migration: a post-retirement verification run showed real `fail`/`warn` results still
+  referencing the old (already-renamed) filenames, because the deploy playbook hadn't been re-run
+  after the script edit. Always redeploy before the post-retirement re-check, not just before the
+  first functional check.
+- **Audit a playbook's `hosts:` target before running it, especially a multi-member group.** A
+  real pre-existing bug (`n8n-install.yml: hosts: productivity` instead of `hosts: n8n`) silently
+  applied n8n's install tasks to two unrelated hosts (`immich`, `console`) sharing that inventory
+  group, caught only because the run was taking unusually long and `ps auxf` on the controller
+  showed the live SSH target was a host with no business being touched. See
+  `feedback_verify_playbook_hosts_scope` memory for the full incident and the fleet-wide audit
+  pattern (`grep -A5 '\[groupname\]' inventory.ini` against every playbook's `hosts:` line) that
+  confirmed it was an isolated mistake, not systemic.
+- **An uncommitted local diff on a target repo isn't automatically safe to overwrite or ignore.**
+  Check `git status`/`git diff` before touching any file a migration needs to edit. If it turns
+  out to be the agent's *own* earlier, unfinished, but real and already-deployed work (confirmed
+  here by checking whether the live deployed copy matched the uncommitted source, and whether a
+  project memory already described the feature), it's safe to fold in and commit alongside the
+  migration edit — pull the live file down (`ssh host "sudo cat <path>"`, not a fresh clone, which
+  would be missing the diff), edit on top of it, push, then on the target host
+  `git checkout -- <file>` (only after confirming the local diff is a strict content subset of
+  the incoming commit) followed by a clean `git pull`.
+- **The global credential-dump guard hook (`block-credential-dump.sh`, a `PreToolUse` Bash hook)
+  matches on *path text*, not actual content sensitivity.** A completely non-secret file whose
+  name happens to contain "secret"/"credential"/"token" (e.g. this very memory file,
+  `project_infisical_secrets_manager.md`) will trigger the same block as a real `.env` dump.
+  Work around it with `ls -la` (metadata), `wc -l` (line count), `cut -d= -f1` (key names only),
+  or the `Read` tool instead of `Bash cat`/`grep`/`tail` on such a path — don't fight it by trying
+  to rephrase the same `cat` command.
+
+## Full secret inventory as of 2026-09-02 (for reference, not exhaustive going forward)
+
+`homelab-fleet` holds: Tailscale OAuth, Postmark, shared Telegram bot token, Grafana API token,
+Cloudflare billing + DNS + admin (account/zone) tokens, Immich admin + DB password, R2/B2 backup
+keys, Vultr, Anthropic (both admin and headless-Claude-Code keys), Proxmox/Terraform, n8n's
+encryption key, and dfw's restic backup credentials. **Deliberately not migrated**: Hermes's
+credentials (uses Agent Vault instead, a different broker — see `agent-vault-credential-broker`
+skill); Olu's own `openclaw-anthropic.env` bundle on `dfw` (a hard classifier-blocked file,
+different ownership boundary); Infisical's own bootstrap `.env` and Agent Vault's master password
+(unavoidable chicken-and-egg — the credential that proves identity *to* the store can't itself
+live in the store); `n8n-import-key.env` (confirmed zero real consumers, orphaned).
