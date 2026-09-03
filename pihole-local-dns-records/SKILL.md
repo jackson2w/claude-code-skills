@@ -120,6 +120,15 @@ same network; volume alone doesn't distinguish "MacBook" from "Apple TV" from "H
 Don't stop at "vendor matches and it's plausible" — one of these concrete checks before writing
 any Local DNS Record that claims a specific device identity.
 
+**Red herring: your own machine shows up in a `_companion-link._tcp` browse too, and resolves to
+loopback.** Confirmed 2026-09-03: browsing `_companion-link._tcp` from a MacBook returned an
+instance matching the MacBook's own Bonjour name ("j2w mac air") alongside real candidates
+(HomePods, an Apple TV). Resolving *that* instance with `dns-sd -L` returned a target hostname
+that pinged back as `127.0.0.1` — the browsing machine advertises itself on the same service type
+it's searching, and the local instance resolves to loopback, not a real LAN IP. Don't mistake this
+for "found it" just because a name looks plausible — cross-check `scutil --get ComputerName` (or
+just recognize the browsing machine's own name) and skip that instance rather than chasing it.
+
 ## Disabling Private Wi-Fi Address to unmask a device's real MAC
 
 When mDNS/Bonjour comes up empty (common for iPads and Android devices, which advertise less
@@ -146,20 +155,37 @@ administered/private. A real vendor OUI has that bit `0`.
 ## Pi-hole's per-client dashboard name lags behind a dns.hosts change
 
 Adding or correcting a `dns.hosts` entry doesn't retroactively relabel that client in the
-dashboard/Top Clients widget. Pi-hole caches a resolved name per client in
-`network_addresses.name`, and — per `resolver.refreshNames` behavior — only refreshes it when FTL
-processes a **fresh query from that specific client IP**, not proactively when the static mapping
-changes. A client that's been quiet for hours (or that only rarely makes outbound queries) will
-keep showing as a raw IP in the dashboard indefinitely, even though `dig`/reverse lookups against
-the record itself work fine.
+dashboard/Top Clients widget, and for **any client with query history from before the record was
+added**, a client that had already accumulated queries today can show as a *split* between two
+rows — a named one and a raw-IP one — since FTL only relabels going forward, not retroactively.
+This is purely cosmetic — filtering/blocking is unaffected regardless of whether the dashboard has
+picked up the name yet.
 
-**Fix:** trigger a real query from the client itself (`ssh <host> "getent hosts example.com"` or
-similar) and check again. For a host with no shell access (e.g. Home Assistant OS, an appliance
-image with no normal root shell), there's no way to force this directly — the label just picks up
-whenever that device next makes a real external DNS query on its own (e.g. an update check, though
-even that isn't guaranteed to generate one), or after its next DHCP lease renewal if its resolver
-changed. This is purely cosmetic — filtering/blocking is unaffected regardless of whether the
-dashboard has picked up the name yet.
+**Corrected 2026-09-03 — "trigger a fresh query" does NOT reliably fix this, despite being the
+obvious first thing to try.** Confirmed live: SSHing into a client with shell access and running
+`getent hosts example.com` to force a real outbound query did **not** update either the
+`client_by_id.name` column in `/etc/pihole/pihole-FTL.db` or the live
+`/api/stats/top_clients` API response — both still showed a blank name for that IP afterward.
+FTL's live in-memory client-name cache (what the dashboard and `/api/stats/top_clients` actually
+read from) is a separate, coarser-grained thing from the DNS resolution path itself — `dig`/PTR
+lookups against the record work immediately, but the *display* cache doesn't reliably follow.
+
+**The fix that actually works:** `systemctl restart pihole-FTL` (not `pihole restartdns` — that
+command doesn't exist in Pi-hole 6's CLI, it was a v5-ism; the v6 help lists `reloaddns`/
+`reloadlists` instead, neither of which was tested/confirmed for this specific cache). A full FTL
+restart forces it to re-resolve every client's name from current `dns.hosts` state, confirmed to
+immediately clean up a 3-device split (two HomePods + a Tailscale IP) in one shot via the API.
+Brief DNS blip during restart (sub-second in practice) — treat like any other routine Pi-hole
+maintenance.
+
+**To check current dashboard-visible state without guessing**, hit the live API directly rather
+than trusting the sqlite `client_by_id` table (which also showed stale/blank names even
+immediately after adding the record — it's not a reliable freshness signal either):
+```bash
+curl -s "http://pihole.tail922cee.ts.net/api/stats/top_clients?count=20" | python3 -m json.tool
+```
+A blank `"name"` field for an IP that has a working `dns.hosts` entry means the display cache is
+stale — restart FTL rather than waiting or trying another forced query.
 
 **Verifying a query landed, without waiting on the slow path:** Pi-hole's long-term SQLite query
 log (`/etc/pihole/pihole-FTL.db`, `queries` table) batches writes on a flush interval and can show
