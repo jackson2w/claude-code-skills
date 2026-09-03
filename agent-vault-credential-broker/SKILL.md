@@ -190,6 +190,26 @@ pattern transfers to another.
   /proc/<pid>/environ | grep '^ANTHROPIC_API_KEY='` (or equivalent) on the actual running
   service's PID is the real proof the credential swap took effect — a `curl` proving the proxy
   mechanism works in isolation doesn't prove the *specific service* picked up the change.
+- **`HTTPS_PROXY`/`HTTP_PROXY` are themselves credential-shaped, not just `AGENT_VAULT_TOKEN`
+  — the agent-vault access token is embedded as URL userinfo** (`http://<token>@host:port`),
+  confirmed live 2026-09-03 reading `hermes-gateway`'s `/proc/<pid>/environ` to confirm proxy
+  wiring for an unrelated new-credential add — the grep only filtered for
+  `HTTPS_PROXY|HTTP_PROXY|SSL_CERT_FILE`, deliberately excluding `AGENT_VAULT_TOKEN`, and still
+  printed a live token straight into the transcript. `~/.claude/hooks/block-credential-dump.sh`
+  does **not** catch this shape at all — it only blocks `cat`/`less`/`head`/`tail` against
+  credential-*named paths*, not a `tr`/`grep` read of `/proc/<pid>/environ` (not a path that
+  looks credential-shaped) revealing a credential-shaped *value*. Treat any live-process environ
+  inspection on an agent-vault-wrapped service as exposing `HTTPS_PROXY`/`HTTP_PROXY` too — grep
+  for the specific var you need and treat proxy-shaped values as unsafe to display, or better,
+  test functionally instead (source the env file into a subshell and make a real call, per the
+  credential-rotation-protocol skill's safe toolkit, rather than ever printing resolved env).
+  Remediation if this happens: rotate the exposed agent's token immediately (`agent-vault agent
+  rotate <name> --token-only`, piped straight into a fresh token file, never printed — see that
+  command's own `--token-only` flag), re-render the consuming service's env via its existing
+  templated playbook (do NOT hand-edit — Ansible's `no_log: true` on the relevant tasks is what
+  keeps a re-render safe), restart the service, and verify the *new* token works with a real
+  proxied call before considering it closed. `agent rotate` invalidates the old token as part of
+  the same operation, so there's no separate "confirm the old one is dead" step needed.
 
 ## If the target agent has its own egress firewall
 

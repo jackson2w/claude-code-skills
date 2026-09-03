@@ -159,6 +159,27 @@ equivalent), and (if a native polling primitive exists) a cron-job playbook. Ext
 existing backup job to cover the channel's directory — a local-only git repo has no remote, so
 its only durability is whatever backup path list already exists for that host.
 
+## Gotcha: a retired skill/credential doesn't reach the other side's live chat session
+
+The channel only reaches the other agent's cron-triggered/polling context — it does not reach
+an already-running live chat session (Telegram, etc.), same as a gateway/service restart
+doesn't reset one either (both are the identical underlying fact: a live session's context is
+whatever it already loaded, not the current state of disk). If you retire a skill file, remove
+a vault credential/service mapping, or otherwise change something an agent's *live*
+conversation had already read into context, posting the correction to this channel alone isn't
+enough — that live session will keep acting on the stale instructions until something resets
+its context.
+
+Confirmed 2026-09-03: removing a REST-API-based Krisp integration (skill file + vault service)
+from Hermes mid-session, in favor of a native MCP connection, left Chuka's live Telegram chat
+still trying the retired REST calls — including treating the resulting garbled auth error
+(the vault no longer had a mapping to inject a real credential for, so a placeholder string
+got sent as a literal bearer token) as a possible real credential emergency, when nothing was
+actually wrong. Fix: post the full explanation to the channel as usual (so the other agent's
+own cron-context and future sessions get it durably), **and** have the human paste a short
+pointer directly into the live chat that's actively retrying the stale path. Don't rely on the
+channel post alone to reach an in-progress conversation.
+
 ## What NOT to relay through this channel
 
 Same escalation rule on every build: anything destructive, irreversible, or touching credentials
