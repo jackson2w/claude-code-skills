@@ -95,10 +95,12 @@ INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
 IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
 [[ $# -eq 0 ]] && { echo "usage: infisical-wrapper.sh <command> [args...]" >&2; exit 2; }
 set -a; source "$IDENTITY_FILE"; set +a
-INFISICAL_TOKEN=$(infisical login --method=universal-auth \
+# INFISICAL_TOKEN as an env var, NOT --token=... on the command line -- see the argv
+# exposure gotcha below.
+export INFISICAL_TOKEN=$(infisical login --method=universal-auth \
   --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
   --domain="$INFISICAL_DOMAIN" --silent --plain)
-exec infisical run --token="$INFISICAL_TOKEN" --projectId="$INFISICAL_PROJECT_ID" \
+exec infisical run --projectId="$INFISICAL_PROJECT_ID" \
   --env=dev --domain="$INFISICAL_DOMAIN" --silent -- "$@"
 ```
 
@@ -111,10 +113,10 @@ INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
 IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
 [[ $# -ne 1 ]] && { echo "usage: infisical-get.sh SECRET_NAME" >&2; exit 2; }
 set -a; source "$IDENTITY_FILE"; set +a
-INFISICAL_TOKEN=$(infisical login --method=universal-auth \
+export INFISICAL_TOKEN=$(infisical login --method=universal-auth \
   --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
   --domain="$INFISICAL_DOMAIN" --silent --plain)
-infisical secrets get "$1" --token="$INFISICAL_TOKEN" --projectId="$INFISICAL_PROJECT_ID" \
+infisical secrets get "$1" --projectId="$INFISICAL_PROJECT_ID" \
   --env=dev --domain="$INFISICAL_DOMAIN" --plain --silent
 ```
 
@@ -163,6 +165,36 @@ identity — reusing `ansible-ctrl`'s identity file across hosts is not how Infi
 
 ## Gotchas hit building this out
 
+- **`infisical run`/`infisical secrets get --token=...` leaks the token via process argv —
+  `ps`, `systemctl status`, and `journalctl -u <unit>` all print it in full.** Confirmed
+  2026-09-03: a routine `systemctl status weekly-housekeeping.service` (run to check on an
+  in-progress sweep, nothing unusual) printed a live 30-day Infisical machine-identity
+  access token straight into a Claude Code session transcript, because the unit's
+  `ExecStart=` was `infisical-wrapper.sh`, whose `exec infisical run --token="$TOK" ...`
+  put the token in the child process's command line. `--help` doesn't document it, but
+  `INFISICAL_TOKEN` as an exported env var works identically for both `infisical run` and
+  `infisical secrets get` (confirmed live) and never appears in argv. Fixed in both
+  `infisical-wrapper.sh` and `infisical-get.sh`, on both `ansible-ctrl`
+  (`homelab-ansible` `7a82244`) and `dfw` (`dfw-ansible` `027b862`) — if either script is
+  ever rewritten from scratch, keep the token in an env var, not a `--token=` flag. General
+  lesson: any wrapper that execs a subprocess with a secret as a CLI flag has this same
+  exposure to `ps`/`systemctl status`/`journalctl`, not just to a careless `cat` — check
+  for an env-var alternative before accepting `--token=`/`--password=`-shaped flags as the
+  only option.
+- **A host's "onboarding complete" record can drift from live reality without anything
+  erroring.** `infisical`'s own build memory said "full `new-host-closing.yml` run, all 8
+  touchpoints closed" (2026-09-02) with node-exporter "installed, confirmed up via a real
+  API query" — but by 2026-09-03 the real systemd-managed `prometheus-node-exporter.service`
+  had never actually started (a leftover manually-run `node_exporter` binary from the build
+  session was squatting on port 9100, so Prometheus scraping looked healthy the whole time
+  regardless), and the Pi-hole DNS drop-in (`/etc/systemd/resolved.conf.d/10-pihole.conf`)
+  didn't exist on disk at all despite being a scoped, supposedly-applied task. Both surfaced
+  only because the weekly sweep's own `ansible_check`-style drift detection flagged them —
+  re-running the two relevant idempotent playbooks (`pihole-dns-client.yml`,
+  `node-exporter.yml`, both `--limit infisical`) fixed both cleanly. Lesson: "closed all
+  touchpoints" at build time is a snapshot, not a guarantee — a host's first post-build
+  weekly sweep is worth checking for real, not just trusting the build session's own
+  self-report.
 - **Deployed-copy vs. git-tracked-source split.** Several hosts in this fleet keep a git-tracked
   script (e.g. `homelab-ansible/scripts/weekly-housekeeping-checks.sh`) separate from its actually
   *running* deployed copy (`/root/bin/weekly-housekeeping-checks.sh` on `ansible-ctrl`), synced
