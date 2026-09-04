@@ -1358,3 +1358,55 @@ computing things like the sha256 attestation filename locally — not touching t
 directory even read-only (a stray `find` into it mid-incident, just to look for other candidate
 legacy files, was a real overstep in this incident — ask the human to run `ls`/`find` themselves
 instead, every time, no exceptions for urgency).
+
+## Two structurally different run-timeout mechanisms produce near-identical-looking failures — don't conflate them
+
+Confirmed 2026-09-04 on `dfw`: a user got OpenClaw's generic "Request timed out before a
+response was generated. Please try again, or increase agents.defaults.timeoutSeconds in your
+config." error on a live chat turn. The journal showed:
+
+```
+[agent/embedded] embedded run timeout: runId=<id> sessionId=<id> timeoutMs=300000
+[provider-transport-fetch] [model-fetch] error ... elapsedMs=681 name=TimeoutError message=request timed out
+```
+
+That second line looks like "the model provider is slow/broken" — it isn't. It's the *symptom*
+of the first line: the whole run hit its overall wall-clock budget (`agents.defaults.
+timeoutSeconds`, 300s here) and got aborted mid-flight, and the abort surfaces as a spurious
+`TimeoutError` on whatever individual call happened to be in progress at that instant — even if
+that specific call had only been running well under a second. **Before concluding a model
+provider is unhealthy from a `TimeoutError` log line, check whether every OTHER call in the same
+run around that timestamp was fast and successful** (`grep` the surrounding window for
+`model-fetch] response ... status=200`) — if so, it's the run budget, not the provider.
+
+Separately, a **cron job's own `payload.timeoutSeconds`** is a distinct, per-job budget (default
+much shorter — 120s was the value that bit in the confirmed incident) from the interactive/
+heartbeat `agents.defaults.timeoutSeconds`. A cron job doing real, legitimate multi-tool-call
+work (e.g. reading several files, checking multiple sources) can blow straight through a 120s
+budget with zero idle time and zero bug — it looks identical in the journal to a stuck/looping
+job (`lane task error: ... durationMs=120145 error="TimeoutError: cron: job execution timed out
+(last phase: model-call-started)"`), but the fix is right-sizing the job's own timeout to its
+real workload, not debugging the trigger-evaluation logic. In the confirmed incident, throwaway
+test jobs with trivial payloads "passed" while the real job with substantive work "failed" — the
+differential was workload-vs-budget, not anything structural; don't be misled by a passing
+control test into assuming the failing job's *logic* is broken.
+
+**Practical takeaway for diagnosing any "OpenClaw timed out" report**: identify which of the two
+budgets fired (`agents.defaults.timeoutSeconds` for live/heartbeat runs vs. a specific cron job's
+`payload.timeoutSeconds`) before treating it as a provider-health or trigger-logic bug. Both
+manifest as a generic-looking `TimeoutError`, and neither one means the model call that appears
+in the error line was actually slow.
+
+## A heartbeat-poll turn can self-extend into an open-ended debugging session with no natural stopping point
+
+Also confirmed 2026-09-04: a routine heartbeat poll found two unrelated cron jobs erroring and
+turned into a genuine 72-call, multi-hop investigation (source-tracing through the dist bundles,
+then creating throwaway test cron jobs to empirically narrow the cause) that never converged
+before hitting the 300s run timeout. Every call did real, distinct work — this is not the same
+failure shape as a stuck retry loop or call-fanout bug — but a heartbeat turn has no built-in
+concept of "this has gone deep enough, stop and report back," so a legitimately interesting lead
+can consume the entire run budget with no final answer produced. If heartbeat runs are expected
+to stay lightweight, scope that explicitly in the heartbeat prompt (investigate-and-report only,
+defer genuine deep dives to a dedicated follow-up run) or add a per-run tool-call cap as a hard
+stop — raising the wall-clock timeout alone doesn't fix this, since a genuinely unbounded
+investigation will just consume however much budget it's given.
