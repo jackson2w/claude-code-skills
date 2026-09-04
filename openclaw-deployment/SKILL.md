@@ -825,6 +825,41 @@ granted script must be run bare (`sudo /usr/local/bin/openclaw-fleet-admin-chang
 <subcommand> <args>`) — never wrapped in `bash -x`, piped through `cat`, or prefixed with
 anything else, even for debugging.
 
+### This sudo pattern works for `openclaw-remote` over SSH, and CANNOT work for the `openclaw` service account
+
+An important scoping limit on everything above. The dispatch-script pattern is granted to
+`openclaw-remote`, a separate account reached over SSH — an ordinary login session with no
+systemd confinement. **The same pattern is impossible for `openclaw` itself**, the account
+`openclaw.service` runs as, because that unit sets `NoNewPrivileges=yes`: the kernel refuses the
+escalation before sudo ever reads sudoers, so any grant to it is decorative. The error is a bare
+`sudo: The "no new privileges" flag is set, which prevents sudo from running as root`, which
+reads like a container quirk rather than "this design can never work."
+
+Confirmed 2026-09-04: an agent-email sender shipped to both `dfw` and `hermes` as a root-owned
+script plus a path-scoped `NOPASSWD` grant, and had never once run from an agent. It looked
+healthy because the only entries in its audit log were the sends *root* made while testing —
+exactly what a working path produces. **Olu found it by trying to use it and reporting the
+failure**, which is the durable lesson: when a mechanism exists so a less-privileged actor can do
+something, the acceptance test has to run as that actor under its real confinement. Testing as
+root proves the plumbing exists, never that the intended caller can reach it.
+
+`systemctl show openclaw -p NoNewPrivileges` before designing anything that needs the confined
+agent to escalate. If it's `yes`, **invert the privilege boundary instead of widening it**: have
+the agent write a job file into a spool directory it can already write, and have a root-owned
+systemd `.path` unit collect and act on it. That keeps the credential entirely out of the agent
+process, which is usually what the sudo grant was reaching for anyway. Two companions:
+`ProtectSystem=strict` means the spool needs a `ReadWritePaths=` drop-in **and a restart**
+(applied at process start), and a `sudo -u openclaw` test from a root shell does **not**
+reproduce the confinement — verify against the running process:
+
+```bash
+grep /var/spool/agent-email /proc/$(systemctl show openclaw -p MainPID --value)/mountinfo
+# want: ... /var/spool/agent-email/queue rw,nosuid,...
+```
+
+See `project_agent_email_identity_path` memory for the resulting design, and the global
+CLAUDE.md entry for the general form.
+
 ### "Verified live" needs the never-before-exercised branch, not just the idempotent short-circuit
 
 A dispatch subcommand that both mutates state and short-circuits on "already done" (e.g.

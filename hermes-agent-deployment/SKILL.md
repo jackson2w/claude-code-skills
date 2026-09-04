@@ -345,6 +345,57 @@ Notes:
   asking Chuka to do the thing) proves the plugin fires in practice, not just that it registers
   cleanly.
 
+### `action: "block"` — the self-correcting variant, and when to prefer it over `"approve"`
+
+`_resolve_block_from_details()` in `hermes_cli/plugins.py` handles two directives, not one:
+`{"action": "approve", ...}` escalates to the human gate, and **`{"action": "block", "message":
+...}` returns the message to the model** and the call never runs. Fail-closed applies to
+`approve` only (a gate that errors, denies, or times out becomes a block).
+
+`block` is the right choice when the command is *categorically* wrong rather than risky, because
+the message becomes an instruction the agent acts on in the same turn — the gate teaches instead
+of merely stopping. Confirmed 2026-09-04 with `hey compose`: `hey` authenticates as Will's own
+HEY account, so an approval prompt asks him to bless a message that is already addressed wrongly,
+and when the message is the one he asked for, approving is the natural thing to do. Blocking with
+a message naming the correct command (`agent-send-email.sh`) let Chuka correct itself without
+another round trip. Reserve `approve` for things that are legitimate but consequential — in the
+same plugin, `reply`/`forward`/`share` stay gated because continuing a thread as Will is correct.
+
+**The prompt text is part of the security control, not decoration.** The first version hardcoded
+"from Will's own address (account 740440)" for every match, including a Postmark path whose whole
+point is that it is *not* that account. Chuka caught it while being asked to approve one and
+flagged the reasoning exactly right: a gate that misdescribes what it is gating trains reflexive
+approving, and an unread prompt is worse than none because it still costs a click and now buys
+nothing. Make the message reflect the route that actually matched.
+
+**Cover every route in the same change that creates one.** Adding the Postmark sender immediately
+created a second send path the original regex did not match, which would have silently defeated a
+gate deployed hours earlier. A gate is only as good as its coverage.
+
+### A sudoers grant to the `hermes` service account can never work — `NoNewPrivileges=yes`
+
+`hermes-gateway.service` sets `NoNewPrivileges=yes`, so the kernel refuses escalation before sudo
+reads sudoers. Any `NOPASSWD` grant to `hermes` is decorative, and the error (`sudo: The "no new
+privileges" flag is set`) reads like a container quirk rather than a dead design. Confirmed
+2026-09-04: an agent-email sender shipped as a root script plus a path-scoped grant had never once
+run from the agent, and looked healthy because the only audit-log entries were root's own test
+sends — exactly what a working path produces.
+
+Check `systemctl show hermes-gateway -p NoNewPrivileges` before designing anything needing
+escalation. If `yes`, **invert the boundary**: the agent writes a job file into a spool it can
+already write, and a root-owned systemd `.path` unit collects it — keeping the credential out of
+the agent process entirely, which is what the grant was reaching for anyway. `ProtectSystem=strict`
+means the spool also needs a `ReadWritePaths=` drop-in **and a restart** (applied at process
+start), and `sudo -u hermes` does **not** reproduce the confinement — verify against the running
+process instead:
+
+```bash
+grep /var/spool/agent-email /proc/$(systemctl show hermes-gateway -p MainPID --value)/mountinfo
+# want: ... /var/spool/agent-email/queue rw,nosuid,...
+```
+
+See `project_agent_email_identity_path` memory for the deployed design.
+
 ## `hermes skills` — a separate skills system from Claude Code's own
 
 Hermes has its own bundled skills feature, unrelated to `~/.claude/skills/` — a plain file drop
