@@ -1184,6 +1184,30 @@ restart)` anywhere in that instance's own history before assuming crash-only cov
 sufficient — any deployment that installs plugins, changes config needing a full reload, or
 otherwise triggers this self-restart path has the same exposure.
 
+## A root-owned dispatch script bypasses `openclaw.service`'s own sandboxing entirely — that's a feature, use it deliberately
+
+Confirmed 2026-09-04: `openclaw.service`'s `ProtectSystem=strict` makes `/usr/lib/node_modules`
+(the npm global install root) read-only to the sandboxed gateway process itself — Olu hit a
+literal `EROFS` trying to upgrade its own runtime, correctly concluded it structurally could not
+do this, and was right. But the existing `npm-global-install` subcommand in
+`openclaw-dfw-admin-changes.sh` (see the dispatch-script pattern above) already lets Olu install
+*other* packages (`wrangler` is the current allowlisted one) — this works precisely because that
+script runs as root via a `NOPASSWD` sudoers grant, entirely outside `openclaw.service`'s own
+unit and its `ProtectSystem=strict` scope. The sandbox only ever constrains the confined
+process's own writes; a separate root-owned script invoked via sudo was never inside that
+boundary to begin with.
+
+**Don't extend that same generic subcommand to let OpenClaw upgrade itself, though.** A
+standalone CLI tool like `wrangler` has no runtime state to break — OpenClaw upgrading its own
+running gateway is categorically different (see the auto-update-crash incident above: a bare
+version bump left the process running fine until the next restart, which then hit a chain of
+undocumented legacy-migration gates with a broken `doctor --fix`). If this capability is ever
+built, it needs its own subcommand with real structure — a pinned target version rather than
+"any version," an automatic pre-upgrade config+session backup (Olu already does this by hand;
+should be built into the capability, not a manual habit), and probably no auto-restart, so a bad
+upgrade doesn't cascade unattended. Treat it as a real design task (this repo's own "propose
+before building" convention), not a same-session manifest edit.
+
 ## A revoked/rotated Telegram token crash-loops the channel with a clear signature — and the fix is often outside the `/home/openclaw` access boundary
 
 Real incident, 2026-08-29: a BotFather mix-up during an unrelated credential rotation
