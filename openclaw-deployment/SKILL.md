@@ -1148,6 +1148,58 @@ here). #116006 fixed the retry pass seeing its own rejected draft in the transcr
 above is that the retry pass can *independently* produce `NO_REPLY` again even without seeing
 any prior draft, because the natural retry instruction just re-poses the same judgment call.
 
+### A version upgrade can silently move a lane onto the exact-match-only silence token, leaking real content that used to be safe
+
+Real incident, 2026-09-04 on `dfw`, distinct mechanism from the tool-call-then-`NO_REPLY` bug
+above (that one drops a real reply; this one *leaks* one, sentinel included). Will reported
+heartbeat/watcher status messages arriving on Telegram with a literal trailing `NO_REPLY` —
+e.g. `"All healthy — heartbeat, watcher, and weekly jobs are enabled...\n\nNO_REPLY"` delivered
+verbatim, not suppressed.
+
+**Root cause, confirmed by diffing the live 2026.8.2 dist against the prior 2026.6.34 build**
+(pulled from local npm cache, integrity-verified) and independently re-verified line-by-line
+against the running server: the 2026.8.2 upgrade changed the **default heartbeat prompt**
+itself, from `"reply HEARTBEAT_OK"` to `"reply ${SILENT_REPLY_TOKEN}"` (i.e. `NO_REPLY`) —
+moving heartbeat turns onto the same exact-match-only silence contract used elsewhere, for the
+first time. `normalizeHeartbeatReply` (`heartbeat-runner-jhGs3jbv.js`) has dedicated
+edge/punctuation stripping for `HEARTBEAT_OK`, built when that was the only heartbeat token —
+`NO_REPLY` never got equivalent treatment when the prompt was switched, so a GLM sign-off habit
+(real status content, then `NO_REPLY` appended as a closer) fails the exact-match silence check,
+gets classified as real visible output, and is delivered whole. A sibling delivery path (cron/
+isolated, `normalizeSilentReplyText` in `delivery-dispatch-policy-CuyV2VD3.js`) has the opposite
+bug on the same mixed-text shape: it *does* detect and strip the trailing token, but then
+discards the entire stripped remainder instead of delivering it — silent data loss rather than a
+leak. Both are one-line-class fixes (strip *and* deliver the remainder), neither shipped.
+
+**General lesson**: an upgrade can silently widen which lanes use a given sentinel/contract
+without updating every strip/normalize function that assumes the old contract — the failure
+doesn't show up as a crash or error, just previously-safe content leaking or vanishing on the
+newly-migrated lane. When a version bump changes default prompts, grep the dist for every
+strip/normalize function touching the affected token, not just the ones already known.
+
+**Diagnostic path that worked**: journal (`journalctl -u openclaw.service`) never logs message
+*text*, only structural events (`outbound send ok` with a messageId/timestamp, no body) — so
+confirming *which* deliveries leaked required a human forwarding the actual Telegram screenshots
+with timestamps, then matching those exact timestamps against journal `outbound send`
+messageIds. Olu's own transcript search initially came back clean ("zero since the upgrade")
+because it only scanned conversational session transcripts — heartbeat/cron deliveries don't
+persist through that path, a blind spot Olu had already self-flagged. The real diagnosis needed
+both sides: Claude Code's root journal access (timing/structure) plus Olu's dist-source access
+(the actual code, which Claude Code can't read — lives under `/home/openclaw`, off-limits per
+[[feedback_no_claude_code_home_openclaw_access]]) plus a live npm-cache diff against the prior
+release (Olu's own follow-up, not initially requested, that found the real upstream trigger).
+
+**Mitigation live**: Olu adjusted the heartbeat prompt behavior so it stops appending the
+sign-off token after real content — confirmed holding via journal cadence (no further leaked
+deliveries; message spacing after the fix matches live conversational replies, not the ~25-30min
+heartbeat interval). This is a band-aid, not the structural fix.
+
+**Filed upstream**: [openclaw/openclaw#138229](https://github.com/openclaw/openclaw/issues/138229)
+— includes the refined dist-diff root cause as a follow-up comment. Distinct from and not a
+duplicate of #128314 (this file, above) or #137024 (an *exact-token* heartbeat reply getting
+replaced by an unwanted fallback placeholder — the opposite direction: over-eager stripping
+causing an unwanted delivery, vs. this bug's no-stripping-at-all).
+
 ### `Restart=on-failure` does not cover OpenClaw's own graceful "supervisor restart" exit — the service goes down and stays down
 
 Real outage, 2026-08-23, caused by legitimate OpenClaw behavior, not a misconfiguration on our
