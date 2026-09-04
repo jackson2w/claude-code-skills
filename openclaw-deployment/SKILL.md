@@ -1462,3 +1462,44 @@ to stay lightweight, scope that explicitly in the heartbeat prompt (investigate-
 defer genuine deep dives to a dedicated follow-up run) or add a per-run tool-call cap as a hard
 stop — raising the wall-clock timeout alone doesn't fix this, since a genuinely unbounded
 investigation will just consume however much budget it's given.
+
+## Olu cannot restart itself — a restart it "should have done" always needs root
+
+Confirmed 2026-09-04 when Will observed that Olu had built a requested feature without first
+performing an approved gateway restart, which read as the agent ignoring an instruction. It
+wasn't: `openclaw.service` runs with `NoNewPrivileges`/no-new-privileges sudo and `tools.elevated`
+gated off, so **the agent is structurally incapable of restarting its own service.** Investigate
+before agreeing that an agent skipped a step — the more common explanation is that it never had
+the capability.
+
+Corollary for any change requiring a restart: plan for a human or Claude Code to run it, and say
+so explicitly in the task you hand the agent, rather than leaving it as an implied step it will
+appear to ignore.
+
+**Before restarting, check whether the on-disk bundle is newer than the running process:**
+
+```bash
+sudo systemctl show openclaw -p ExecMainStartTimestamp   # when the running process started
+sudo stat -c '%y %n' <installed bundle path>             # when the code on disk last changed
+```
+
+If the bundle predates the running process, the restart re-runs an identical version with no
+migration debt — boring and safe. If it postdates it, the restart is the moment an already-applied
+update's migration debt comes due (see the section above on that). That condition being *false*
+is what made the 2026-09-04 crash destructive and a later same-day restart uneventful.
+
+## Delivery monitoring belongs out of process — see the `agent-delivery-canary` skill
+
+OpenClaw's three characteristic failure modes — silent non-delivery (turn dispatch), content leak
+(sentinel strings reaching the user), and egress silent drops — **produce no error line at all**,
+so every journal-scraping monitor is structurally blind to them. The journal logs delivery but
+never message content:
+
+```
+[telegram] outbound send ok accountId=default chatId=<id> messageId=<n> deliveryKind=text
+```
+
+That asymmetry is what makes the trust split work: a root verifier outside the agent asserts
+**delivery** from the journal, while the agent asserts **content**, being the only party that can
+see the composed text. Full architecture, escalation model, and the failure-path tests in the
+`agent-delivery-canary` skill.

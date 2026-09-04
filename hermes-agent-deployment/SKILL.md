@@ -168,6 +168,64 @@ before trusting a cron test:**
   writing output to a file the job manages itself, as `agent-exchange-poll` does) is the right
   choice whenever you don't need Hermes's own delivery path at all.
 
+### The credential trap has a second, far more deceptive symptom: `hermes send` → "Not Found"
+
+Added 2026-09-04, after the gotcha above — already written down here since 2026-09-01 — was
+rediscovered the hard way three times in one session, because **only the `401` symptom was
+documented and the other symptom looks nothing like a credentials problem.**
+
+`hermes send` invoked from a plain SSH shell has no bot token, for exactly the same reason
+`hermes cron run` has no API key: `EnvironmentFile=/home/hermes/.hermes/gateway.env` is sourced
+only by systemd at the gateway's launch. But its failure is not an auth error. Telegram's API
+returns **HTTP 404 for a bad/absent bot token in the URL path**, so the CLI reports:
+
+```
+hermes send: Telegram send failed: Not Found
+```
+
+which reads as *"that chat doesn't exist"* or *"the bot isn't in that group"* — a plausible,
+specific, and completely wrong conclusion. It cost a real one: a canary was pointed at a user's
+DM instead of a shared group, and Will was asked to add a bot to a group it was probably already
+in.
+
+**The control test that settles it in ten seconds** — run before drawing any conclusion from a
+`hermes send` failure:
+
+```bash
+# Send to a chat you KNOW works (one with confirmed deliveries in agent.log).
+sudo -u hermes -H env HERMES_HOME=/home/hermes/.hermes hermes send -t telegram:<known-good-id> 'control'
+```
+
+If that *also* returns "Not Found", the token is missing and the result says nothing about the
+chat you actually care about.
+
+**Generalised rule for this host — the one to remember instead of the individual symptoms:**
+any `hermes` CLI subcommand run from a plain SSH shell runs without credentials and **is not a
+probe of the live system**. `cron run` shows it as `401`, `send` shows it as `Not Found`, and a
+future subcommand will invent a third disguise. Verify through the gateway — temporarily
+reschedule the job to fire in a couple of minutes, read `agent.log`, restore the schedule — or
+claim nothing.
+
+### Per-message delivery is logged in `agent.log`, NOT the systemd journal
+
+This is the enabling fact for any external verification of Hermes's output, and it is easy to
+conclude the opposite. `journalctl -u hermes-gateway` carries Telegram **connection** health
+only — reconnects, 502s, polling state — and never a per-message line. Three days of journal on
+a live box contained zero `chat_id`/`chatId` strings, which supported a confident and wrong
+conclusion that Hermes could not be externally verified at all.
+
+The delivery record lives in `~/.hermes/logs/agent.log`:
+
+```
+INFO cron.scheduler: Job '<job_id>': delivered to telegram:<chat_id> via live adapter
+INFO cron.scheduler: Job '<job_id>': mirrored delivery into telegram:<chat_id> session transcript
+INFO cron.scheduler: Job '<job_id>': agent returned [SILENT] — skipping delivery
+```
+
+Root can read it while the agent cannot forge systemd's view of its own liveness, which is what
+makes an out-of-process verifier possible — see the `agent-delivery-canary` skill for the
+architecture built on top of this.
+
 ## A gateway process restart does NOT reset Chuka's live chat session
 
 **Confirmed 2026-09-01.** Restarting `hermes-gateway.service` restarts the Python process, but
