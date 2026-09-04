@@ -1228,3 +1228,93 @@ update offset <N> and starting fresh.
 
 Verify clean via `journalctl -u openclaw.service --since <restart-time> | grep -i telegram` —
 should show the two lines above and nothing matching `unauthorized|401|exited|auto-restart`.
+
+## OpenClaw self-updates silently — a routine restart can be the moment its migration debt comes due
+
+Real incident, 2026-09-04 (full narrative: `project_openclaw_autoupdate_crash_2026_09_04` memory
+in the homelab planning repo). OpenClaw updated itself from 2026.7.1-2 to 2026.8.2 with no
+operator action and no notice anywhere — the version bump alone didn't crash anything, because
+the *running* process kept running fine. The crash only surfaced on the next full process
+restart (a routine, unrelated one, triggered for an unconnected reason), which hit a chain of
+three sequential legacy-state migration gates the old version had never needed. Lesson: if
+`openclaw.service` needs restarting for any reason, check `openclaw --version` against what you
+last confirmed first, and be mentally ready for a chain of migration gates instead of a clean
+restart — the version may not be what you think it is.
+
+**`openclaw doctor --fix` itself may be completely non-functional on a hand-authored systemd
+unit.** On this deployment (system-level unit with a custom `ExecStart` wrapping the binary
+through Agent Vault's MITM proxy — see `agent-vault-credential-broker` skill — not installed via
+`openclaw gateway install --system`), every `doctor --fix`/`--fix --force` invocation failed
+identically:
+
+```
+Doctor could not enter maintenance. Stop the Gateway through its service owner, then run
+openclaw doctor --fix. Error: Gateway service ownership or shutdown could not be verified.
+Run openclaw gateway status --deep and stop it through its service owner before retrying.
+```
+
+This persisted even with the Gateway genuinely, repeatedly verified stopped (`systemctl
+is-active` = inactive, no matching process), across multiple retries, with and without an
+explicit `XDG_RUNTIME_DIR=/run/user/<uid>` in the invoking environment, and after confirming
+(via direct manual `systemctl --user`/`busctl --user` calls, bypassing the CLI entirely) that
+the D-Bus session bus for the service account was genuinely up and working. Do not assume this
+is the well-documented openclaw/openclaw#137503 (missing `dbus-user-session` package) without
+independently verifying — that package can already be installed and the session bus can already
+be live, and the generic error persists anyway for a still-unidentified reason. Filed as a fresh
+issue: openclaw/openclaw#137888.
+
+**The actual fix: bypass `doctor --fix` entirely and use its narrower, documented sub-commands**
+one legacy-state class at a time — each of these worked non-interactively where the umbrella
+`--fix`/`--repair` could not (a documented general pattern, see closed issues #134036 and
+#134331 — non-TTY/automation contexts silently skip or deadlock the umbrella migrations):
+
+1. **`Legacy workspace setup state requires migration for <workspace>`** — per
+   openclaw/openclaw#137866/#134331, the startup guard checks THREE possible legacy source
+   markers before it'll proceed, existence-only (it throws on presence, never reads content):
+   - `<workspace>/openclaw-workspace-state.json`
+   - `<workspace>/.openclaw/workspace-state.json`
+   - `~/.openclaw/workspace-attestations/<sha256-of-resolved-workspace-path>.attested` — compute
+     the filename with `python3 -c "import hashlib; print(hashlib.sha256(b'/abs/path/to/workspace').hexdigest())"`
+   Back up and remove whichever of the three actually exist. The canonical SQLite state usually
+   already has the correct data — these are safe, redundant files once superseded, not the only
+   copy of anything, unlike the next one.
+2. **`Legacy session store requires migration: <path>/sessions/sessions.json`** — this one DOES
+   hold real conversation/session history, so don't just delete it. Use the narrow, safe,
+   additive sub-command instead (preview first, it's read-only):
+   ```
+   openclaw doctor --session-sqlite dry-run --session-sqlite-agent <agent-id> --json
+   openclaw doctor --session-sqlite import --session-sqlite-agent <agent-id> --json
+   ```
+   `import` moves legacy JSONL files into an archive directory (not deleted) and reports
+   `importedEntries`/`importedTranscriptEvents` counts — verify these match `legacyEntries`
+   before trusting it fully migrated.
+3. **`Legacy exec approvals exist at <home>/.openclaw/exec-approvals.json`** — move the file
+   aside (must stay within the service account's own home directory; it can't write to `/root`
+   even under `sudo -u`), then re-register it:
+   ```
+   sudo -u openclaw mv ~openclaw/.openclaw/exec-approvals.json ~openclaw/.openclaw/exec-approvals.json.moved
+   sudo -u openclaw openclaw approvals set --file ~openclaw/.openclaw/exec-approvals.json.moved
+   ```
+   Verify via `openclaw approvals get` that the full allowlist (target/agent/pattern rows)
+   survived intact before considering this done.
+
+After all three are cleared, expect `[gateway] ready` in the log but the crash-loop breaker
+(tripped during the earlier failed boots) will likely still be **suppressing channel auto-start**
+even on a clean boot — it needs one manual nudge, exactly as its own log line suggests:
+```
+openclaw gateway call channels.start --params '{"channel":"telegram"}'
+```
+Messages that arrived during the whole outage are queued/retried by the channel provider and
+delivered once it comes back — confirmed zero message loss across a ~75-minute outage in this
+incident, no need to worry that queued inbound messages were silently dropped.
+
+**Access-boundary note for Claude Code specifically**: every one of the above commands (the
+`cp`/`mv`/`openclaw doctor`/`openclaw approvals` invocations) touches `/home/<service-account>`
+directly and must be run by the human operator, not Claude Code — see
+`feedback_no_claude_code_home_openclaw_access` in the homelab planning repo's memory. Claude
+Code's role in an incident like this is: `systemctl stop/start/restart` (fine, doesn't touch the
+home directory), reading `journalctl` output, researching the actual upstream fix commands, and
+computing things like the sha256 attestation filename locally — not touching the account's home
+directory even read-only (a stray `find` into it mid-incident, just to look for other candidate
+legacy files, was a real overstep in this incident — ask the human to run `ls`/`find` themselves
+instead, every time, no exceptions for urgency).
