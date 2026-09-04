@@ -1229,6 +1229,20 @@ update offset <N> and starting fresh.
 Verify clean via `journalctl -u openclaw.service --since <restart-time> | grep -i telegram` —
 should show the two lines above and nothing matching `unauthorized|401|exited|auto-restart`.
 
+## OpenClaw's built-in background auto-updater (`update.auto.enabled`) is the actual root cause of silent version jumps
+
+Found later the same night as the incident below, via the installed dist bundle
+(`/usr/lib/node_modules/openclaw/dist/update-startup-*.js`, `schema-*.js`): OpenClaw ships a
+genuine background auto-update feature, config key `update.auto.enabled`, **documented default
+`false`**. If a deployment is hitting silent version jumps like the one below, the live config
+almost certainly has this explicitly set `true` — check with `openclaw config get
+update.auto.enabled` (run by the account owner; this is inside the service account's config,
+off-limits to Claude Code per the access-boundary note below) and set it `false` if confirmed,
+rather than relying only on drift-detection in a package-freshness check to catch it after the
+fact. Related settings worth reviewing in the same pass: `update.channel`, `update.checkOnStart`.
+No cron/systemd-timer/exec-tool-call evidence of an *explicit* update command needs to exist for
+this to have happened — the mechanism is fully internal to the gateway process itself.
+
 ## OpenClaw self-updates silently — a routine restart can be the moment its migration debt comes due
 
 Real incident, 2026-09-04 (full narrative: `project_openclaw_autoupdate_crash_2026_09_04` memory
