@@ -1229,31 +1229,33 @@ update offset <N> and starting fresh.
 Verify clean via `journalctl -u openclaw.service --since <restart-time> | grep -i telegram` —
 should show the two lines above and nothing matching `unauthorized|401|exited|auto-restart`.
 
-## OpenClaw's built-in background auto-updater (`update.auto.enabled`) is the actual root cause of silent version jumps
+## OpenClaw has a real background auto-updater (`update.auto.enabled`) — check it, but verify before blaming it
 
-Found later the same night as the incident below, via the installed dist bundle
-(`/usr/lib/node_modules/openclaw/dist/update-startup-*.js`, `schema-*.js`): OpenClaw ships a
-genuine background auto-update feature, config key `update.auto.enabled`, **documented default
-`false`**. If a deployment is hitting silent version jumps like the one below, the live config
-almost certainly has this explicitly set `true` — check with `openclaw config get
-update.auto.enabled` (run by the account owner; this is inside the service account's config,
-off-limits to Claude Code per the access-boundary note below) and set it `false` if confirmed,
-rather than relying only on drift-detection in a package-freshness check to catch it after the
-fact. Related settings worth reviewing in the same pass: `update.channel`, `update.checkOnStart`.
-No cron/systemd-timer/exec-tool-call evidence of an *explicit* update command needs to exist for
-this to have happened — the mechanism is fully internal to the gateway process itself.
+Confirmed via the installed dist bundle (`/usr/lib/node_modules/openclaw/dist/update-startup-*.js`,
+`schema-*.js`): OpenClaw ships a genuine background auto-update feature, config key
+`update.auto.enabled`, **documented default `false`**. Worth checking (`openclaw config get
+update.auto.enabled`, run by the account owner — this is inside the service account's config,
+off-limits to Claude Code per the access-boundary note below) on any deployment as a matter of
+awareness. **But don't assume it's the cause of an unexplained version jump without verifying** —
+on the incident below, this was the first theory and it was wrong: the live config and all 7
+on-disk config backups had the key unset (default `false`, genuinely off), and the real cause
+turned out to be a human running `npm install -g openclaw@<version>` manually in a real
+interactive terminal. The tell that separates the two: check `journalctl _COMM=sudo` (not just
+`journalctl -u openclaw.service`) for the transition window — a manual update shows up there
+with a real `TTY=pts/N`, distinct from anything Claude Code or an internal auto-updater would do.
 
-## OpenClaw self-updates silently — a routine restart can be the moment its migration debt comes due
+## A restart can be the moment an already-applied update's migration debt comes due — whether the update was manual or automatic
 
 Real incident, 2026-09-04 (full narrative: `project_openclaw_autoupdate_crash_2026_09_04` memory
-in the homelab planning repo). OpenClaw updated itself from 2026.7.1-2 to 2026.8.2 with no
-operator action and no notice anywhere — the version bump alone didn't crash anything, because
-the *running* process kept running fine. The crash only surfaced on the next full process
-restart (a routine, unrelated one, triggered for an unconnected reason), which hit a chain of
+in the homelab planning repo). OpenClaw was updated from 2026.7.1-2 to 2026.8.2 (manually, by the
+operator, per the correction above) — the version bump alone didn't crash anything, because the
+*running* process kept running fine on the old in-memory code. The crash only surfaced ~17
+minutes later on the next full process restart (for an unrelated reason), which hit a chain of
 three sequential legacy-state migration gates the old version had never needed. Lesson: if
 `openclaw.service` needs restarting for any reason, check `openclaw --version` against what you
 last confirmed first, and be mentally ready for a chain of migration gates instead of a clean
-restart — the version may not be what you think it is.
+restart — a version change (deliberate or not) may be sitting there unnoticed since the last
+restart.
 
 **`openclaw doctor --fix` itself may be completely non-functional on a hand-authored systemd
 unit.** On this deployment (system-level unit with a custom `ExecStart` wrapping the binary
