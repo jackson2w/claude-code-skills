@@ -169,3 +169,37 @@ handle all of them in the same sitting rather than discovering integration point
 across hours. Slower, serialized rotations don't just cost time — each one is a fresh opportunity
 for the human's manual file edit to introduce an unrelated mistake, and for whoever's verifying to
 reach for an unvetted "just this once" command under the accumulated time pressure.
+
+## A credential that cannot be rotated headlessly — find these before an incident does
+
+Added 2026-09-04 after inventorying the agent hosts' email credentials.
+
+Most of this skill assumes rotation is a scripted operation. Some credentials aren't. The HEY
+agent CLI (`~/.config/hey-cli/credentials.json` on each agent host) uses a refresh-token flow
+whose only re-issuance path is `hey auth logout` → `hey auth login`, and **login requires
+completing a browser sign-in**. There is no headless equivalent. `HEY_TOKEN` looks like an escape
+hatch but accepts only the *short-lived access token*, so it cannot be sourced from a secrets
+manager and left alone.
+
+The practical consequences, all of which are worse discovered mid-incident:
+
+- **It cannot be migrated into Infisical/Vaultwarden as the live source.** The file on disk is
+  the authoritative store, by design of the tool. Trying to centralise it produces a broken
+  integration, not a safer one.
+- **Rotation needs a human at a browser, per host.** Two agent hosts means two sign-ins.
+- **A compromise cannot be remediated in seconds.** That changes the calculus on what the
+  credential is allowed to reach — which is why agent-*originated* email moved to Postmark
+  (revocable in one dashboard click, per-address) while HEY stayed for read/triage only.
+
+**When inventorying any credential, record the rotation mechanism, not just the location.**
+"Where does it live" is the easy half; "what does re-issuing it actually require, and who has to
+be awake for it" is the half that matters when something has gone wrong. A credential whose
+rotation is browser-interactive is a different operational object from one behind an API, and the
+inventory should say so explicitly rather than leaving a future reader to discover it.
+
+**Corollary for detection**: because these can't be rotated quickly, detecting a *lapse* early
+matters more than usual. Both agent hosts now publish `email_creds_missing` and
+`email_creds_bad_mode` (presence and mode only — never contents) into the tailnet health document
+their peer watches, so a vanished or loosened credential file surfaces cross-host within 15
+minutes rather than at the next attempted send. Counts, not paths: there is no reason to publish
+the location of every credential on a host to anything that can reach the health port.
