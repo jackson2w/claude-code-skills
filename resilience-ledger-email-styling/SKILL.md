@@ -126,6 +126,29 @@ share code across the runtimes/hosts involved:
    `claude-send-email.sh --markdown`, which is Claude Code's own correspondence to Will: pause
    handoffs and anything ad-hoc. Until it existed those went out as `TextBody` and nothing else.
 
+   **It runs on three hosts, byte-identical, and there is no shared filesystem to make it
+   anything else** (`ansible-ctrl` at `/root/bin/`, `dfw` and `hermes` at `/usr/local/bin/`,
+   each deployed from its own Ansible repo). `ansible-ctrl`'s copy in `homelab-ansible` is
+   canonical; a change there must be copied to the other two in the same session. Verify with
+   `md5sum` across all three — this is the same lockstep problem #4 lost for three days.
+
+   **On `dfw` and `hermes` it renders in the ROOT DISPATCHER, not in the agent** (added
+   2026-09-05 when Will asked for Olu's and Chuka's mail to match). The agent keeps writing
+   plain markdown into the spool queue exactly as before, so there is no agent-side change, no
+   new flag for an agent to remember, and nothing edited inside either agent's own workspace —
+   which matters on `dfw`, where `/home/openclaw` is off-limits and could not have been edited
+   anyway. Rendering belongs on the dispatcher side regardless: it already owns how a job
+   becomes a message, and a formatting decision has no business inside the confined process.
+
+   Default-on with an opt-out (a job may set `"markdown": false`), and a body that already
+   begins `<!doctype`/`<html>` passes through as `HtmlBody` untouched rather than being escaped
+   — that guard is what keeps #1's report output working through the same path. The markdown
+   still goes out as `TextBody` every time, so a failed render degrades to a plain readable
+   message rather than a lost one. The eyebrow and footer derive from the sending address's
+   local part, so Olu signs as Olu and Chuka as Chuka with no per-identity table to keep in
+   sync. Both dispatchers' audit logs record `html=yes/no`, so a silent fallback to plain text
+   is visible from the host rather than only from Will's inbox.
+
    Its one real departure from #1–#4, chosen by Will from three options: **technical entities
    are distinguished by shape, not colour.** Four inline treatments — command (filled, hairline
    border, semibold), host/device (dotted underline, no fill), network/address (hairline border,
