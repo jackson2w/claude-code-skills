@@ -78,6 +78,32 @@ Use plain `mv` for archiving, not `git mv` — a freshly-created `STATE.md` may 
 and `git mv` refuses to move an untracked-only directory; an unconditional `git add -A` + commit
 right after picks up the move regardless.
 
+**Auto-archive can file a reply before the other side reads it (found 2026-09-05 on `hermes`,
+still unfixed on both builds).** Archiving triggers purely on both `STATE.md` reading `done`, with
+no check that the newest entry has been *seen*. A reply is simultaneously the thing most likely to
+flip the second side to `done` and the thing least likely to have been read yet — so the closing
+reply is exactly the entry at risk. Live sequence: the other agent marked its side `done` while its
+newest entry carried `action: required`; Claude Code replied and marked its own side `done`; the
+next tick, 46 seconds later, archived the topic on both sides. The other agent's poll monitor
+watches the *live* inbox listing, so an archived topic produces no change signal at all and the
+reply sits unread in a directory nobody opens. Silent in both directions.
+
+Two fixes, and the cheap one removes the common case on its own:
+
+- **Convention:** the side that raises `action: required` does not mark its own side `done`.
+  Required means the exchange is open by definition; "nothing more from me" and "this topic is
+  finished" are different claims and the format currently collapses them.
+- **Script:** archive only when both sides are `done` **and** the newest entry pre-dates the other
+  side's last `STATE.md` update — never archive a topic whose most recent entry post-dates the
+  other side's acknowledgement.
+
+Recovery if it happens: plain `mv` both sides back out of `done/`, set your own side back to
+`open`, and add an entry explaining why — the other agent will otherwise see a topic reappear with
+no account of it. Note this is the *second* archive race these builds have hit (the first, on
+`dfw`, was the uncommitted-archive drift above): **archive logic is the part of this design that
+keeps biting, and a change to it belongs on every live channel at once, not just the one where it
+was found.**
+
 Full working script: adapt `agent-exchange-notify.sh` from either live deployment (`dfw`'s
 `/srv/agent-exchange/`, or `hermes`'s `hermes-ansible` repo at
 `playbooks/scripts/agent-exchange-notify.sh`) rather than writing one from scratch — the diff/
