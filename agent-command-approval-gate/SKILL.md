@@ -237,6 +237,50 @@ is deliberately not done, because the agent's home is a boundary the human set.
 Expect the first firing to catch **you**, not the agent: vendoring is manual, so the human-side copy
 goes stale the moment the agent patches and publishes. That is the check working.
 
+### Give the check a consumer, or it trains its reader to ignore it
+
+Detection without a scheduled response is not monitoring. On 2026-09-05 this exact alert fired every
+~15 minutes for **ten hours — 39 consecutive failures** — because re-vendoring was a manual step
+nobody was scheduled to do. The agent had improved its own gate twice and published both times; the
+human-side copy simply stood still. Nothing was broken and nothing was learned until someone asked.
+
+Automate the toil, not the judgement:
+
+- An hourly job on the host, offset ~10 minutes **after** the agent's manifest tick so it reads a
+  settled hash rather than racing it.
+- It **stages**, it does not accept. Auto-accepting makes the drift check self-silencing — any live
+  change instantly becomes the recorded one, and "vendored" stops meaning *a version someone looked
+  at* and starts meaning *whatever the agent last had*. Accident is precisely what a
+  converge-on-anything loop erases, and accident is all this check was ever able to catch.
+- Only stage an export whose **content hashes to the manifest**. If no such export exists, the live
+  gate moved and was never published — a different situation that must stay noisy.
+- **One notification per distinct drift**, fingerprinted on the manifest. Replacing a repeated alert
+  nobody acts on with a differently-shaped repeated alert fixes nothing.
+- Accepting is one command, which **re-verifies against the manifest at accept time too** — the gate
+  may have moved again since staging, and recording a version that was never running is worse than
+  the drift it closes.
+- Offer auto-accept as a documented flag, defaulted off. That is the owner's call, not the
+  implementer's.
+
+**A script that commits on someone's behalf must stage only what it touched.** The accept step's
+`git add -A` swept three unrelated uncommitted files into a commit titled *"Re-vendor
+admin-changes-gate: index.ts"* — accurate in content, wrong in name. Scope the add to the vendored
+directory and exit cleanly when it has nothing to commit. This only surfaced because the path
+happened to run against a dirty repo; a clean-repo test passes and says nothing.
+
+And give it a way to be tested that does not page anyone (`..._NOTIFY=false`). Exercising the clean
+path proves nothing about the branch that matters.
+
+### Vendored-vs-disk is not disk-vs-loaded
+
+The manifest hashes what is **on disk**. It says nothing about what the running process has loaded,
+and plugins load at process start. Both agents on this fleet reported their own loaded state
+incorrectly within the same day, in opposite directions: one said its fix was pending when a restart
+had already made it live, the other said pending and was right. **Neither agent can observe its own
+loaded build**, and nothing here checks that third gap. Settle it from outside with the unit's
+`ActiveEnterTimestamp` against the plugin's mtime — one command, and it beats any agent's account of
+itself.
+
 ## Review checklist
 
 - [ ] Matching is command-position, not substring, for anything that appears in ordinary prose
@@ -249,3 +293,5 @@ goes stale the moment the agent patches and publishes. That is the check working
 - [ ] Every send/mutation route is gated — a new route added later silently defeats the gate
 - [ ] Live-fire run after the restart that loads it, all three cases
 - [ ] A vendored copy plus drift detection exists if the plugin lives outside IaC
+- [ ] The drift check has a scheduled consumer, not just an alert
+- [ ] `ActiveEnterTimestamp` vs plugin mtime checked before believing any claim about what is loaded
