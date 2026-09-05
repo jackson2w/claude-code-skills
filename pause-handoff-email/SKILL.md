@@ -68,8 +68,8 @@ Use the agent mail path, not a ledger-styled report — this is correspondence, 
 report:
 
 ```bash
-scp -q <body>.txt <attachment>.md hermes:/tmp/
-ssh hermes "/usr/local/bin/agent-send-email.sh \
+scp -q <body>.txt <attachment>.md ansible-ctrl:/tmp/
+ssh ansible-ctrl "/root/bin/claude-send-email.sh \
   --to willie@williejackson.com \
   --subject 'Pause handoff YYYY-MM-DD — <topic>' \
   --body-file /tmp/<body>.txt \
@@ -77,16 +77,17 @@ ssh hermes "/usr/local/bin/agent-send-email.sh \
 ```
 
 Write a **plain-text body** that reads on a phone without horizontal scrolling, and attach the
-same content as markdown for reading on a laptop. The sender exists on both `hermes` (sends as
-`chuka@williejackson.com`) and `dfw` (sends as `olu@williejackson.com`); prefer whichever host the
-work concerned. See the `infisical-secrets-manager` and `agent-vault-credential-broker` skills for
-the surrounding infrastructure.
+same content as markdown for reading on a laptop.
 
-**Sign the body `-- Claude Code`.** The From address is fixed by root-owned config and there is no
-Claude Code identity, so an unsigned message reads as the agent's own.
+**Send from `ansible-ctrl`, as `claude@williejackson.com`.** Not from `hermes` or `dfw`: those
+send as `chuka@`/`olu@`, which attributes Claude Code's own handoff to an agent, and the `claude`
+identity is deliberately unconfigured on both (they consume Telegram and fetched web content, so
+a compromise there should not be able to send as Claude Code). Sign the body `-- Claude Code`
+anyway — a signature costs nothing and survives being forwarded.
 
-Expect an approval prompt on Will's Telegram — the send is gated. If neither host is reachable,
-say so and put the full handoff in the terminal instead; never silently skip it.
+If `ansible-ctrl` is unreachable, say so and put the full handoff in the terminal instead. Never
+silently skip it, and do not fall back to an agent host just to get it sent — wrong attribution
+on a handoff is worse than a late one.
 
 ## Rules that make it worth reading
 
