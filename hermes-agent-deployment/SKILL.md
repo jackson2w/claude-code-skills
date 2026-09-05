@@ -464,6 +464,47 @@ Hermes splits "platforms I receive messages from" and "tools I can call" into ge
 config surfaces that happen to share overlapping labels (e.g. "homeassistant" exists as both a
 disabled-by-default platform key *and* a tools-category key).
 
+## Suppressing vendor log noise with a plugin instead of patching `gateway/run.py`
+
+Hermes's own logging config exposes only a global `level` — there is no per-logger knob — and
+patching a file under `/usr/local/lib/hermes-agent` is reverted by the next `hermes update`
+(see the local-source-patches section above). So when vendor code emits a warning that is wrong
+on this host's configuration, the durable fix is a **plugin that installs a `logging.Filter` at
+import**, Ansible-managed like any other.
+
+Worked example, built 2026-09-05 (`stream-diagnostic-filter`, `hermes-ansible@4715a64`):
+`gateway/run.py` warns `Normal final-send NOT suppressed despite active stream consumer ...
+possible duplicate send` whenever a stream consumer *object* exists and suppression didn't fire.
+With `streaming.enabled: false` and `interim_assistant_messages: true`, consumer creation is
+gated on `_want_stream_deltas or _want_interim_consumer` (run.py ~5779), so the second term alone
+builds a consumer that nothing ever streams through — every firing carried
+`streamed=False previewed=False content_delivered=False`, meaning nothing reached the user and
+the final send was the only delivery. 155 warnings in six days, all wrong.
+
+Three mechanics worth keeping:
+
+- **Mutating `record.levelno` inside a logger-attached filter works**, because `Logger.handle()`
+  applies the logger's filters *before* `callHandlers()` compares the level against each
+  handler's. Downgrade to DEBUG rather than dropping — the line stays reachable under
+  `logging.level: DEBUG` instead of vanishing.
+- **A plugin with no hooks still needs a no-op `register()`.** Without one the loader logs
+  `Plugin 'x' has no register() function` at WARNING on every start *and* leaves the plugin out
+  of the `N found, M enabled` tally (57/50 → 57/51 once added), even though `hermes plugins list`
+  already showed it `enabled`. A noise-suppressing plugin that adds a warning on every boot is a
+  self-defeating deploy; caught only by reading the load log afterwards rather than assuming it
+  was clean.
+- **Filter narrowly and fail loud.** Suppress only the provably-impossible shape, pass anything
+  ambiguous through untouched, and leave a message whose *shape* changed upstream at full
+  volume rather than guessing at it. Ship the tests beside the plugin and run them against the
+  **deployed** file during the play, before the restart handler fires — a filter's whole job is
+  to suppress a log line, so a regression that suppresses the wrong line is invisible by
+  construction unless a test asserts what a handler actually emits.
+
+The upstream report is still the real fix (the predicate should require
+`_streamed or _previewed or _content_delivered`); the plugin keeps the error stream readable
+until it lands. Worth being explicit that this is a local mute of a known-wrong signal, not a
+correction of the underlying condition.
+
 ## Local source patches don't survive `hermes update` — check after every update
 
 The install is an **editable pip install** (`/usr/local/lib/hermes-agent`, venv at

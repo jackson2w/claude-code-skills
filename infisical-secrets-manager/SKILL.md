@@ -6,8 +6,7 @@ description: This skill should be used when migrating a credential off a plainte
 # Infisical secrets manager — fleet credential migration
 
 Self-hosted Infisical (VM 111 `infisical`, `192.168.50.29`, `https://infisical.tail922cee.ts.net`),
-project `homelab-fleet` (ID `4655aace-2e75-4c2a-8d29-9bd438868396`), environment `dev`, path `/`
-for everything unless a specific reason exists to use a folder. Built and fully rolled out
+project `homelab-fleet` (ID `4655aace-2e75-4c2a-8d29-9bd438868396`), environment `dev`. Path `/` held everything until 2026-09-05, when a second agent host needed the same secret NAMES with different values and moved to a per-host folder (`--path=/hermes`) -- read the folder-vs-prefix gotcha below before adding a host. Built and fully rolled out
 2026-09-02 across `ansible-ctrl`, `pbs`, `n8n`, `immich`, `dfw`, and Claude Code's own interactive
 Cloudflare admin tokens (30 secrets total) — see `project_infisical_secrets_manager` memory for
 the full incident-by-incident history. This skill is the durable "how," not the narrative.
@@ -95,11 +94,13 @@ INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
 IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
 [[ $# -eq 0 ]] && { echo "usage: infisical-wrapper.sh <command> [args...]" >&2; exit 2; }
 set -a; source "$IDENTITY_FILE"; set +a
-# INFISICAL_TOKEN as an env var, NOT --token=... on the command line -- see the argv
-# exposure gotcha below.
-export INFISICAL_TOKEN=$(infisical login --method=universal-auth \
-  --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
+# Neither the token NOR the client credential goes on the command line -- see the argv
+# exposure gotcha below. These two env vars are undocumented in `infisical login --help`.
+export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$INFISICAL_CLIENT_ID"
+export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$INFISICAL_CLIENT_SECRET"
+INFISICAL_TOKEN=$(infisical login --method=universal-auth \
   --domain="$INFISICAL_DOMAIN" --silent --plain)
+export INFISICAL_TOKEN
 exec infisical run --projectId="$INFISICAL_PROJECT_ID" \
   --env=dev --domain="$INFISICAL_DOMAIN" --silent -- "$@"
 ```
@@ -113,9 +114,13 @@ INFISICAL_PROJECT_ID="4655aace-2e75-4c2a-8d29-9bd438868396"
 IDENTITY_FILE="/root/.config/infisical-machine-identity.env"
 [[ $# -ne 1 ]] && { echo "usage: infisical-get.sh SECRET_NAME" >&2; exit 2; }
 set -a; source "$IDENTITY_FILE"; set +a
-export INFISICAL_TOKEN=$(infisical login --method=universal-auth \
-  --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" \
+# Neither the token NOR the client credential goes on the command line -- see the argv
+# exposure gotcha below. These two env vars are undocumented in `infisical login --help`.
+export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$INFISICAL_CLIENT_ID"
+export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$INFISICAL_CLIENT_SECRET"
+INFISICAL_TOKEN=$(infisical login --method=universal-auth \
   --domain="$INFISICAL_DOMAIN" --silent --plain)
+export INFISICAL_TOKEN
 infisical secrets get "$1" --projectId="$INFISICAL_PROJECT_ID" \
   --env=dev --domain="$INFISICAL_DOMAIN" --plain --silent
 ```
@@ -181,6 +186,41 @@ identity — reusing `ansible-ctrl`'s identity file across hosts is not how Infi
   exposure to `ps`/`systemctl status`/`journalctl`, not just to a careless `cat` — check
   for an env-var alternative before accepting `--token=`/`--password=`-shaped flags as the
   only option.
+- **The same fix stopped one step short for a year of habit's worth of scripts: the CLIENT
+  CREDENTIAL was still in argv.** Found 2026-09-05 while porting these scripts to a third
+  host. The 09-03 fix moved `INFISICAL_TOKEN` off the command line but left
+  `infisical login --client-id=... --client-secret=...` — the call that *mints* the token —
+  fully exposed to the same `ps`/`/proc`/`systemctl status`/`journalctl` read, on a
+  credential that does not expire on its own. `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and
+  `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` work and are undocumented in
+  `infisical login --help`, exactly as `INFISICAL_TOKEN` is undocumented in
+  `infisical run --help`. Fixed fleet-wide: `homelab-ansible@7b17b50`, `dfw-ansible@898afe0`,
+  hermes's copy correct from the start. **Verify an undocumented env var in BOTH directions
+  before relying on it** — `infisical login` also succeeds from a cached local session, so a
+  positive test alone proves nothing. The negative control is
+  `env -u INFISICAL_UNIVERSAL_AUTH_CLIENT_ID -u INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET
+  infisical login --method=universal-auth ...`, which must exit 1 with no output. General
+  lesson: after fixing a secret-in-argv leak, look one call UPSTREAM — the thing that
+  produced the secret you just protected is usually passed the same way.
+- **The helper's install path is not the same on every host, and the mismatch fails
+  silently.** `ansible-ctrl` keeps it at `/root/bin/infisical-get.sh`; `dfw` installs to
+  `/usr/local/bin/` via `infisical-tooling-install.yml`. A consumer that hardcoded
+  `/root/bin/...` on dfw therefore never invoked Infisical at all — its `[[ -x ... ]]` test
+  simply failed and it fell through to a plaintext file, for every run since it was built,
+  while the comment above the branch claimed Infisical was in use. Confirmed 2026-09-05 in
+  `agent-mail-dispatch.sh`. **Nothing errored, which is the point: a fallback chain that
+  silently succeeds by the worse route is indistinguishable from one that took the good
+  route.** Two fixes worth copying: probe both locations, and have the consumer log which
+  route actually answered (`cred_source=infisical:/usr/local/bin/infisical-get.sh`) so the
+  question is answerable from the log instead of by re-reading the chain.
+- **Use a per-host FOLDER, never a name prefix, when two hosts need the same secret names.**
+  `infisical run` injects each secret into the environment under its *stored* name, so
+  renaming `RESTIC_PASSWORD` to `HERMES_RESTIC_PASSWORD` to dodge a collision silently
+  delivers nothing to a consumer that reads `RESTIC_PASSWORD`. Pass `--path=/<host>` in both
+  helper scripts instead and keep the names the consumers require. Trade-off to state up
+  front: a genuinely shared value (e.g. a Postmark server token) then exists in two folders
+  and a rotation must hit both — the tidy end state is `/<host>` folders for host-specific
+  values with shared ones at the root.
 - **A host's "onboarding complete" record can drift from live reality without anything
   erroring.** `infisical`'s own build memory said "full `new-host-closing.yml` run, all 8
   touchpoints closed" (2026-09-02) with node-exporter "installed, confirmed up via a real

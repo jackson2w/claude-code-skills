@@ -95,7 +95,12 @@ Two fixes, and the cheap one removes the common case on its own:
   finished" are different claims and the format currently collapses them.
 - **Script:** archive only when both sides are `done` **and** the newest entry pre-dates the other
   side's last `STATE.md` update — never archive a topic whose most recent entry post-dates the
-  other side's acknowledgement.
+  other side's acknowledgement. **The guard's failure mode must be not-archive** (leave in place,
+  re-evaluate next tick) on any comparison that doesn't resolve — unreadable STATE, missing or
+  unparseable timestamp, clock skew. The two error directions are wildly asymmetric: an extra
+  tick of delay is invisible because nothing watches the archive, while a wrong archive is
+  invisible forever. That also makes the guard safe to ship with no migration. (Refinement from
+  Olu, 2026-09-05, on the design as originally filed.)
 
 Recovery if it happens: plain `mv` both sides back out of `done/`, set your own side back to
 `open`, and add an entry explaining why — the other agent will otherwise see a topic reappear with
