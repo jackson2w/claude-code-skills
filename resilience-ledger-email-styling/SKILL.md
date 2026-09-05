@@ -1,26 +1,33 @@
 ---
 name: resilience-ledger-email-styling
-description: This skill should be used when sending or styling any transactional/notification email for Will (dfw, Olu, WordPress, or any future homelab automation) and it should carry the resilience-ledger design system look, when a new HTML email needs light+dark mode that actually works, or when debugging an email where dark mode text is invisible/low-contrast. Also load this before touching render-ledger-email.py, ledger-email-style.php, or render-terminal-report.py's HTML output. Trigger phrases include "ledger styled email", "resilience ledger design system email", "make this email look like the other ones", "dark mode email text invisible", "email dark mode not working", "wp_mail styled", "render-ledger-email.py", "status pill email", "callout box email html".
+description: This skill should be used when sending or styling any transactional/notification email for Will (dfw, Olu, WordPress, or any future homelab automation) and it should carry the resilience-ledger design system look, when a new HTML email needs light+dark mode that actually works, or when debugging an email where dark mode text is invisible/low-contrast. Also load this before touching render-ledger-email.py, ledger-email-style.php, render-terminal-report.py's HTML output, or render-correspondence-email.py (Claude Code's own prose emails to Will, markdown-in/HTML-out, entities distinguished by shape not colour). Trigger phrases include "ledger styled email", "resilience ledger design system email", "make this email look like the other ones", "dark mode email text invisible", "email dark mode not working", "wp_mail styled", "render-ledger-email.py", "status pill email", "callout box email html".
 ---
 
 # Resilience-ledger email styling
 
 A shared visual language for every outbound email in this environment — `dfw`/Olu's own sends,
-WordPress's `wp_mail()` notifications, and the homelab-wide weekly report system on
-`ansible-ctrl`. Built 2026-08-17 from the `resilience-ledger-design-system` Artifact Will liked
+WordPress's `wp_mail()` notifications, the homelab-wide weekly report system on `ansible-ctrl`,
+and (since 2026-09-05) Claude Code's own correspondence to Will. Built 2026-08-17 from the `resilience-ledger-design-system` Artifact Will liked
 (warm-paper/dark-ink "systems report" look — status pills, tinted callout boxes, IBM Plex
 Mono/Sans). This is a **different, separate visual language** from anything else in this
 environment named "Kanagawa" — don't confuse it with Ghostty's terminal theme.
 
 ## Source of truth for the palette
 
-`~/Desktop/resilience-ledger-design-system/tokens.css` on Will's Mac. Every hex value used
-anywhere in this pattern is hand-copied from that file — **re-derive from there, not from
-memory or from any of the three implementations below**, if the palette ever needs to change.
+**`~/Desktop/resilience-ledger-design-system/tokens.css` is GONE as of 2026-09-05** — the
+directory no longer exists on Will's Mac (he moves files between machines; this is not a
+mystery to investigate). The surviving authority is now
+`/root/bin/render-terminal-report.py` on `ansible-ctrl`, whose light and dark blocks carry the
+full palette. Re-derive from there. If Will ever restores the tokens file, it wins again.
+
+Historically: every hex value used anywhere in this pattern was hand-copied from that file —
+**re-derive from the surviving source, not from memory or from any of the implementations
+below**, if the palette ever needs to change.
 There is no shared stylesheet these implementations `@import` (email clients strip external
-CSS), so a palette change means editing all three by hand. Light values live in the bare
-selectors; dark values are the second `@media (prefers-color-scheme: dark)` block. Ignore the
-third `[data-theme="dark"]` block in that file — that's for a web toggle, irrelevant to email.
+CSS), so a palette change means editing all five by hand. In every one of them, light values
+live in the bare selectors and dark values in the `@media (prefers-color-scheme: dark)` block.
+The retired tokens file also carried a third `[data-theme="dark"]` block for a web toggle — if
+it resurfaces, ignore that block; it is irrelevant to email.
 
 ## The one rule that matters most: theme color goes through CSS classes, never inline
 
@@ -78,9 +85,9 @@ of rendering the authored dark palette:
 <meta name="supported-color-schemes" content="light dark">
 ```
 
-## The four implementations — no shared renderer across runtimes
+## The five implementations — no shared renderer across runtimes
 
-Same design language, four separate hand-written implementations, because nothing here can
+Same design language, five separate hand-written implementations, because nothing here can
 share code across the runtimes/hosts involved:
 
 1. **`/usr/local/bin/render-ledger-email.py`** on `dfw` (Python, world-readable/executable —
@@ -111,10 +118,43 @@ share code across the runtimes/hosts involved:
    restyle since it isn't deployed via `homelab-ansible` and nothing sweeps this repo). If #3's
    markup changes, port the change here too — don't let it drift again.
 
+5. **`/root/bin/render-correspondence-email.py`** on `ansible-ctrl` (git-tracked in
+   `homelab-ansible` as `scripts/render-correspondence-email.py`, deployed by
+   `claude-email-install.yml` — same versioned-source vs deployed-copy split as #3, so editing
+   the script proves nothing until that play runs). Added 2026-09-05. **Markdown in, HTML out**
+   — no JSON schema at all, because its content is prose rather than findings. It backs
+   `claude-send-email.sh --markdown`, which is Claude Code's own correspondence to Will: pause
+   handoffs and anything ad-hoc. Until it existed those went out as `TextBody` and nothing else.
+
+   Its one real departure from #1–#4, chosen by Will from three options: **technical entities
+   are distinguished by shape, not colour.** Four inline treatments — command (filled, hairline
+   border, semibold), host/device (dotted underline, no fill), network/address (hairline border,
+   no fill), everything else (filled, no border). Shape survives greyscale, colour-blindness,
+   and a client that recolours text; colour stays reserved for callouts, where it means
+   something. Only `$` (command) and `@` (host) need author markup — addresses are regex-
+   detected, since tagging every subnet by hand is the friction that ends with a format going
+   unused. Callouts are `> [!FLAG|BLOCKED|OK|NOTE|NEXT] text`.
+
+   Prose is set in a **serif** here (`'IBM Plex Serif','Iowan Old Style',Georgia,serif`) rather
+   than Plex Sans — the only implementation that does. Iowan Old Style ships on macOS and iOS,
+   which is where Will reads mail, so the printed register survives the fact that no web font
+   ever loads.
+
 If a *new* consumer needs this styling: reuse #1's schema directly if the content is simple
 (a title, maybe a status callout, a few prose/data sections); reuse #3's schema if it needs
-categorized findings with per-item status and/or a follow-ups section. Don't invent a fourth
-schema without a real reason.
+categorized findings with per-item status and/or a follow-ups section; reuse #5 if the content
+is genuinely a *letter* — prose that happens to contain hosts and commands — rather than a
+status report. Don't invent a sixth schema without a real reason.
+
+**Two bugs #5 hit that any future implementation will hit too**, both found by screenshotting
+rather than by reading output:
+- **A wrapped list item silently leaves its list.** Markdown's lazy continuation (a bullet
+  whose source text runs onto the next line without a marker) is easy to omit from a hand-rolled
+  block parser; the tail then renders as a stray paragraph below the list, which looks like a
+  content mistake rather than a parser one.
+- **Code-span padding reads as a word space before punctuation.** At 5px horizontal padding an
+  inline entity followed by a comma renders as `UNIFI_API_KEY ,`. 3px keeps the fill legible
+  without the gap.
 
 ## Sending — Cloudflare Email Sending (dfw/Olu path)
 

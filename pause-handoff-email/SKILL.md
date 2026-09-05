@@ -68,16 +68,37 @@ Use the agent mail path, not a ledger-styled report — this is correspondence, 
 report:
 
 ```bash
-scp -q <body>.txt <attachment>.md ansible-ctrl:/tmp/
+scp -q <handoff>.md ansible-ctrl:/tmp/
 ssh ansible-ctrl "/root/bin/claude-send-email.sh \
   --to willie@williejackson.com \
   --subject 'Pause handoff YYYY-MM-DD — <topic>' \
-  --body-file /tmp/<body>.txt \
-  --attach /tmp/<attachment>.md; rm -f /tmp/<body>.txt /tmp/<attachment>.md"
+  --eyebrow 'Pause handoff' \
+  --markdown \
+  --body-file /tmp/<handoff>.md; rm -f /tmp/<handoff>.md"
 ```
 
-Write a **plain-text body** that reads on a phone without horizontal scrolling, and attach the
-same content as markdown for reading on a laptop.
+**Write one markdown body, not a text body plus a markdown attachment.** `--markdown` renders a
+styled HTML part *and* sends the same markdown as the plain-text part, so the laptop-readable
+copy the attachment used to provide is now the message itself. An attachment here is now
+redundant — attach only something genuinely separate, like a diff or a log.
+
+Use the correspondence dialect so the technical content is set properly. Four inline forms, and
+only `$` and `@` need typing — addresses are detected:
+
+| Written | Means | Renders as |
+|---|---|---|
+| `` `$ systemctl restart foo` `` | a command | filled, hairline border, semibold |
+| `` `@ansible-ctrl` `` | a host or device | dotted underline, no fill |
+| `` `192.168.50.0/24` `` | a network or address | hairline border, no fill |
+| `` `/etc/pve/lxc/100.conf` `` | paths, units, versions, identifiers | filled, no border |
+
+Callouts are `> [!FLAG] text`, with `FLAG` / `BLOCKED` / `OK` / `NOTE` / `NEXT`. **`FLAG` is
+section 1's shape** — one per unproven claim, each carrying its check. `NEXT` suits section 3.
+Do not decorate every section with a callout; a callout on ordinary prose is noise, and five of
+them in a row read as none.
+
+Prose still has to work as plain text, because the plain-text part is this same markdown: keep
+lines wrapped, and never rely on the styling to carry meaning.
 
 **Send from `ansible-ctrl`, as `claude@williejackson.com`.** Not from `hermes` or `dfw`: those
 send as `chuka@`/`olu@`, which attributes Claude Code's own handoff to an agent, and the `claude`
