@@ -93,6 +93,27 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
 - **image-crop-focal-point** — picking a normalized focal point / CSS `background-position` so a
   subject stays in frame across aspect-ratio crops.
 
+## Self-hosted agent fleet
+
+Two always-on agents — Olu (OpenClaw, on `dfw`) and Chuka (Hermes, on `hermes`) — plus the
+plumbing that keeps them honest.
+
+- **openclaw-deployment** — deploying/debugging an OpenClaw gateway: secure baseline config, the
+  two config traps that silently break things (`tools.exec.security` vs `ask`, model vs API key),
+  Telegram lockdown, memory indexing, and handing the agent a new capability it will trust.
+- **hermes-agent-deployment** — the Hermes equivalent: gateway install, `EnvironmentFile`
+  credentials, MCP servers, `DANGEROUS_PATTERNS` and why `approvals.mode` never fires without a
+  pattern match.
+- **agent-command-approval-gate** — deciding *which* commands need human approval: substring vs
+  anchored regex vs command-position tokenizer, the wrapper bypasses that defeat the middle one,
+  the heredoc/backtick false positive the tokenizer introduces, and the live-fire protocol.
+- **agent-delivery-canary** — monitoring that catches what an agent cannot report about itself:
+  silent non-delivery, a crash-looping gateway, and faults already broken at baseline.
+- **agent-vault-credential-broker** — brokering real API keys into an agent's outbound calls so
+  the agent process never holds them.
+- **cross-agent-filesystem-exchange** — the two-inbox filesystem channel agents and Claude Code
+  use to hand work to each other without routing every message through a human.
+
 ## Other
 
 - **postmark** — transactional email via Postmark's SMTP relay or HTTP API, including from
