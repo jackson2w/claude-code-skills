@@ -210,23 +210,43 @@ the thing to check, not just that the `curl` call didn't error (see Verification
 
 The invisible-dark-text bug above was caught by **actually rendering and screenshotting the
 output**, not by reading the CSS and reasoning it should work. Before shipping any change to
-one of the four implementations (for #4, run the JS renderer under plain `node` against a
+one of the five implementations (for #4, run the JS renderer under plain `node` against a
 sample JSON payload to get an HTML file to screenshot — no Worker deploy needed just to check
 rendering):
 
-```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless --disable-gpu --window-size=700,1000 \
-  --screenshot=/path/out.png "file:///path/to/rendered.html"
+```js
+// shot.js -- npm install playwright (no browser download needed, see below)
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch({ channel: 'chrome' });
+  for (const scheme of ['light', 'dark']) {
+    for (const [label, width] of [['desktop', 700], ['mobile', 390]]) {
+      const ctx = await browser.newContext({
+        colorScheme: scheme, viewport: { width, height: 900 }, deviceScaleFactor: 2,
+      });
+      const page = await ctx.newPage();
+      await page.goto('file://' + process.argv[2]);
+      await page.screenshot({ path: `shot-${scheme}-${label}.png`, fullPage: true });
+      await ctx.close();
+    }
+  }
+  await browser.close();
+})();
 ```
 
-**To check light mode when the environment's default is dark** (confirmed on this Mac —
-`--force-prefers-color-scheme=light` did *not* actually override the rendering in testing,
-don't rely on it): strip the `@media (prefers-color-scheme: dark) { ... }` block out of a throwaway
-copy of the rendered HTML (brace-counting from the media query's opening `{` to find its real
-close, since it contains nested `{}`), and screenshot that copy instead — with the override
-removed, only the base (light) rules can apply regardless of the environment's actual
-preference.
+**Use Playwright's `colorScheme`, not the old brace-stripping workaround.** An earlier version of
+this skill said to delete the `@media (prefers-color-scheme: dark)` block out of a throwaway copy
+in order to see light mode, because `--force-prefers-color-scheme` did not work under raw headless
+Chrome. That tests *modified* HTML, which is exactly the wrong thing for a bug whose whole nature
+is that the shipped file behaves differently than the file reads. Playwright emulates the media
+query properly and screenshots the real file, in both schemes, at two widths, in one pass.
+
+**`channel: 'chrome'` matters.** `chromium.launch()` with no options wants the exact browser build
+the installed `playwright` package pins, and the cached build on this Mac is usually older —
+`Executable doesn't exist at .../chromium_headless_shell-1243/...` while 1234 sits on disk. The
+documented fix (`npx playwright install chromium`) downloads a few hundred MB to solve a problem
+that does not need solving: `channel: 'chrome'` drives the Google Chrome already installed here,
+needs no download, and renders the same engine. `npm install playwright` on its own is enough.
 
 For a real end-to-end check (not just a local screenshot): send one isolated real test through
 whichever transport is relevant (`send_postmark_email` for `ansible-ctrl`, the Cloudflare
