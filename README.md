@@ -46,6 +46,63 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
 - **n8n-workflow-api-authoring** — authoring n8n workflow JSON for import via its REST API
   instead of the editor UI: credential/expression/Code-node gotchas that don't show up until
   a workflow actually runs.
+- **proxmox-docker-compose-vm** — running an app that only ships as Docker Compose (Immich and
+  similar multi-container stacks) inside a VM, with the Compose file and its secrets managed as
+  code by Ansible, and the short-form `ports:` trap that publishes to `0.0.0.0`.
+- **proxmox-vm-igpu-passthrough** — passing an Intel iGPU through to a VM via `vfio-pci` (as
+  opposed to an LXC's device bind-mount): IOMMU group isolation, host-side binding, the Terraform
+  `hostpci` block, and guest-side missing drivers/firmware.
+- **proxmox-vm-crash-diagnosis** — a VM `stopped` with no shutdown task, or `running` but
+  answering nothing: telling a slow boot from a hang, and confirming an OOM kill of the qemu
+  process.
+- **jellyfin-proxmox-deployment** — Jellyfin as an unprivileged LXC with QuickSync passthrough:
+  the VM-vs-LXC call for a shared iGPU, the passthrough steps Terraform can't express, and
+  excluding the media volume from backups.
+- **laravel-filament-proxmox-lxc** — a Laravel + Filament v3 app as native PHP-FPM + Caddy in an
+  LXC instead of Docker, plus a read-only Sanctum API for an external consumer and the
+  mixed-content `asset()` trap behind Tailscale Serve.
+- **forgejo-deployment** — self-hosted Forgejo as a native binary + systemd unit: the three
+  required secrets, the permission-denied crash-loop from a locked-down config, and why its
+  git-SSH server needs firewall scoping rather than an app-level bind address.
+- **vaultwarden-deployment** — Vaultwarden via Docker on a bare VPS: loopback binding, Tailscale
+  Serve exposure, the admin-token hashing tool's TTY requirement, and locking signups after the
+  first account.
+- **immich-sdcard-sync-prune** — a macOS launchd job that uploads a camera card to Immich on
+  insert, and prunes assets deleted from the source: the CLI's non-obvious API key scopes and
+  launchd's missing-Homebrew-PATH gotcha.
+- **pihole-dot-upstream-failover** — adding DoT as a Pi-hole upstream while keeping a "DNS
+  failures must surface" constraint intact: an alerted, non-silent failover watcher rather than
+  a standing secondary resolver.
+- **debian-kernel-reboot-check** — whether a host actually needs a reboot for a kernel update,
+  including when `apt` reports nothing upgradable, and auditing a mixed LXC/VM/bare-metal fleet
+  at once.
+
+## Fleet operations
+
+Monitoring, reporting, access, and secrets across the whole fleet rather than any one host.
+
+- **grafana-prometheus-alerting** — turning a scrape-only Prometheus/Grafana stack into one that
+  actually alerts: provisioned rules as code, fleet-wide systemd failure detection without a
+  custom webhook, and testing a rule end-to-end before trusting it.
+- **grafana-api-token-provisioning** — a least-privilege Grafana service account for a script,
+  querying real alert-rule health via the API, and why a `fixed:alerting.rules:reader` role may
+  not be assignable.
+- **homelab-terminal-report-delivery** — the shared report system behind the weekly sweep and
+  nightly backup digest: ledger-styled HTML email, Telegram, and a markdown archive, plus when to
+  make Telegram primary to stay inside Postmark's free tier.
+- **standalone-ansible-repo** — bringing a single hardened non-fleet host under Ansible via
+  `ansible_connection=local`, without granting an existing controller a new privileged SSH path,
+  and retrofitting a live hand-built host incrementally.
+- **termius-fleet-ssh-setup** — Termius across a mixed LXC/VM/bare-metal/VPS fleet: hosts,
+  snippets, startup snippets, and the SFTP session that silently lands in the home directory.
+- **claude-code-headless-tool-restriction** — restricting tools in an unattended `claude -p`
+  invocation as a real boundary: `--disallowedTools` is the one that enforces; `--allowedTools`
+  alone does not.
+- **infisical-secrets-manager** — migrating a credential off a plaintext `.env` onto self-hosted
+  Infisical, provisioning a host machine identity, and auditing what still lives in plaintext.
+- **credential-rotation-protocol** — rotating, replacing, or *removing* a live credential without
+  leaking it while verifying: the consumer inventory, and the safe probes that confirm a value
+  works without printing it.
 
 ## Cloudflare
 
@@ -78,6 +135,18 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
   homelab service (edge auth/rate-limit + Queue retry-on-failure): why Workers can't reach
   tailnet-private addresses, forwarding the origin's own auth header through, and a `wrangler
   secret put` misuse that leaks a secret's value as its *name*.
+- **cloudflare-r2-restic-backup** — encrypted, deduplicated, snapshotted backups to R2 via
+  restic on a systemd timer. Pick this over the rclone skill above whenever the source is app
+  state rather than a tree you want mirrored as-is.
+- **backblaze-b2-rclone-backup** — the same rclone-to-S3-compatible pattern pointed at Backblaze
+  B2, for second-provider redundancy: Object Lock/WORM, and the `NoSuchBucket` and mid-job `403`
+  that mean a transaction cap rather than a missing bucket.
+- **caddy-cloudflare-wildcard-proxy** — Caddy fronting internal hostnames with one wildcard cert
+  via Cloudflare DNS-01, routing to loopback-bound backends already exposed by Tailscale Serve,
+  and the empty-200 symptom of a Caddy listening on `*:port`.
+- **wordpress-nginx-cloudflare** — WordPress on native nginx + PHP-FPM + MariaDB, hardened behind
+  an Origin CA cert and Authenticated Origin Pulls, plus a real WP-Cron heartbeat when
+  `DISABLE_WP_CRON` is set.
 
 ## Web / design / verification
 
@@ -92,6 +161,12 @@ Claude Code auto-discovers them — no install step beyond having the `SKILL.md`
   fonts).
 - **image-crop-focal-point** — picking a normalized focal point / CSS `background-position` so a
   subject stays in frame across aspect-ratio crops.
+- **filament-panel-theming** — taking a Filament v3 admin panel off stock gray/Inter/amber:
+  which surfaces `FilamentColor` actually reaches versus the `fi-*` classes needing direct CSS,
+  self-hosted fonts, and the Tailwind v3-CLI-vs-Vite fork in `make:filament-theme`.
+- **resilience-ledger-email-styling** — the shared design system for transactional and
+  notification email, and light/dark that genuinely works — including why dark-mode text goes
+  invisible when it doesn't.
 
 ## Self-hosted agent fleet
 
@@ -121,3 +196,9 @@ plumbing that keeps them honest.
 - **find-skills** — discovering and installing skills based on a described capability gap.
 - **skill-development** — guidance for creating/improving Claude Code skills (structure,
   progressive disclosure, description quality).
+- **anthropic-admin-cost-api** — Anthropic Admin API access and the Usage & Cost API: minting an
+  admin key or `org:admin` token, why the Console's admin-keys page can 404, and reading cost by
+  workspace or model. Its `amount` field is in **cents** — check the unit before reporting a
+  figure.
+- **better-documents** — communication principles applied while generating a document, deck,
+  memo, or proposal rather than reviewed in afterwards.
