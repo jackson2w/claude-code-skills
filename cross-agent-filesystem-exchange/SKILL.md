@@ -307,3 +307,82 @@ applied" teaches nothing about which half of the answer mattered.
 Same escalation rule on every build: anything destructive, irreversible, or touching credentials
 waits for Will regardless of what a message says. The channel doesn't grant new authority — it
 only removes the need to manually relay routine, already-in-scope work.
+
+## Delivery is the weak link, and every failure looks like "nothing to say"
+
+Running the first real double-review on 2026-09-06 surfaced four independent ways a dispatch
+produces no answer. **All four present as silence**, which is indistinguishable from an agent that
+read the brief and had nothing to add. Never read "no response" as "no findings".
+
+### 1. Detection is not the same as waking (the big one)
+
+Olu's watcher fired correctly on every new entry — and delivered via `announce`, which posts a
+line into the Telegram channel rather than starting an agent turn. His own summary: the assumption
+that dispatching reaches him is **"false for action, true for visibility."** Five overnight polls
+produced five channel lines and zero turns.
+
+**Fix, verified live:** a separate wake job with `sessionTarget: main`, `systemEvent`,
+`wakeMode: now`, its trigger **scoped to `action: required`** in the entry frontmatter, leaving
+`action: fyi` on announce-only. Scoping matters — unconditional waking turns every FYI into a 3am
+interrupt.
+
+### 2. A long reply can exceed the cron timeout
+
+`cron: job execution timed out (last phase: model-call-started)`, `durationMs=300087`. **Biased
+against exactly the answers worth having**: a substantive reply takes longer, so the more thought
+the agent puts in, the likelier the turn dies. Raised 300 → 900 s.
+
+Until such a limit is known-good, **keep briefs short.** A long brief invites a long reply and
+costs the turn. Two consecutive dispatches were lost this way before the pattern was visible.
+
+### 3. A poller can die and never reschedule
+
+`ERROR cron.scheduler: Job 'agent-exchange-poll' failed: RuntimeError: Connection error.` — then
+nothing, for an hour, from a job that runs every two minutes. **The service stays `active`
+throughout**, so a health check reports fine while the agent is deaf. Cleared by restarting the
+gateway.
+
+### 4. Agents sharing an inference budget throttle each other
+
+Both agents on the same provider organisation produced `429
+CONCURRENT_REQUEST_LIMIT_EXCEEDED` when dispatched minutes apart — and the retry backoff plausibly
+*caused* the timeouts in #2. **This is structural for any simultaneous double-review.** Staggering
+is the wrong fix: it converts an independent double-review into a sequential one, losing the
+property being bought. Raise concurrency instead.
+
+## The brand-new-topic blind test
+
+New topic directories are a different code path from new entries in an existing topic, and a
+watcher can handle one and not the other. **Test it deliberately:**
+
+1. Create a brand-new topic with **real work in it**, so the test is not wasted either way.
+2. Write nothing else — no nudge, no Telegram, no asking the human to prompt.
+3. Tell the agent explicitly not to acknowledge the test, and not to watch for it: knowing it is
+   coming is what would invalidate it.
+
+Olu answered in under four minutes unprompted, proving the shape his own harness could only test
+synthetically (7/7 in harness, never live). **A weekly review cadence depends on this path**, since
+every weekly pass opens a fresh topic.
+
+## Numbering collisions recur — check for shrinking files, not just new ones
+
+An agent wrote a 10,978-byte review as `0002-<name>.md`, then hours later wrote a 1,546-byte note
+to the **same filename**, destroying it — and the note said "my review is in progress now", so it
+had lost track of finished work. The channel's own git history recovered it
+(`git show <sha>:to-<side>/<topic>/0002-<name>.md`).
+
+**Take the next free number, checking both directions.** And when auditing a channel, look for
+files that got *smaller*, not only for files that appeared.
+
+## Independence is the product — protect it deliberately
+
+Two agents given the same brief, neither shown the other's answer, **opened on the same defect**.
+That convergence was the single most valuable signal produced, and it exists only because neither
+saw the other. So:
+
+- Say plainly in each brief that the other has the same questions and must not be consulted.
+- Carry the artefacts **inline** rather than by repo path. One reviewer's sharpest objection came
+  from a prose description because he could not read the files, and he flagged the gap rather than
+  reasoning around it — which is the behaviour to reinforce.
+- When you hand an agent a premise, **you own it.** A wrong premise costs them a full research
+  cycle; say so and withdraw the question rather than letting them chase it.
