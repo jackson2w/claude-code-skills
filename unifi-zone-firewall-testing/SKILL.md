@@ -1,6 +1,6 @@
 ---
 name: unifi-zone-firewall-testing
-description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block".
+description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block".
 ---
 
 # Testing UniFi zone firewall policies so the results mean something
@@ -105,6 +105,111 @@ Pi-hole. No capture, no control, no ambiguity.
 
 Watch for caching — use domains never queried through that resolver before, and verify they are
 blocked by asking the blocking resolver directly so the cache under test is never primed.
+
+## Give one host every VLAN at once, instead of moving it between SSIDs
+
+Moving a laptop onto the SSID under test works but costs the interface you were using and needs
+an auto-revert. If any wired host sits on a **trunked** switch port, a far better instrument
+exists — tagged sub-interfaces, several VLANs at once, no gateway or port change to revert:
+
+```bash
+ip link add link enp3s0f0 name vl30 type vlan id 30
+ip link set vl30 up
+dhclient -1 vl30                       # a real lease from the real DHCP server
+```
+
+If the port does not carry the VLAN you simply get no lease — a harmless no-op, so this is cheap
+to try before assuming you need a port reconfiguration. On UniFi, a default port profile passes
+every VLAN tagged with the native one untagged, so this often just works.
+
+**But binding a test to that interface is not enough, and the failure looks exactly like a
+policy block.** `curl --interface vlXX` (and anything else using `SO_BINDTODEVICE`) forces egress
+on the device — **it does not invent a route**. With the default route still on the physical NIC,
+every bound probe fails to connect, and *cannot connect* is indistinguishable from *policy denied
+it*. Give each leg its own table:
+
+```bash
+ip route add default via 192.168.30.1 dev vl30 table 130
+ip rule  add oif vl30 table 130 priority 130
+```
+
+**Then assert internet reachability per leg before any interesting row.** `curl --interface vl30
+https://1.1.1.1/` must succeed. That single line is the control that discriminates, because it
+fails when the plumbing is broken and succeeds when it is healthy.
+
+A cautionary detail: an assertion written *specifically* to catch this can still miss it. A
+control requiring "Guest → a Trusted host is blocked, Trusted → same host reaches" is satisfied
+perfectly by a **total routing failure** — the physical NIC has an on-link route and the VLAN
+legs have none. The control shared the defect it was meant to detect. What exposed it was an
+unrelated row claiming Guest could not reach `1.1.1.1:443`, which is plainly false.
+
+Also arm a dead-man's switch before touching routing on a host you reach over that network:
+
+```bash
+systemd-run --on-active=480 --unit=revert /bin/sh -c \
+  "ip link del vl30; ip route replace default via 192.168.1.1 dev enp3s0f0"
+```
+
+## Any host on a tailnet may not be a valid instrument at all
+
+Before trusting any reachability result, check where the packet would actually go:
+
+```bash
+ip route get <target>          # Linux
+route -n get <target>          # macOS  → look for utunN
+```
+
+If a peer advertises the target range as a **Tailscale subnet route**, every probe to it leaves
+through the tunnel and never reaches the gateway. Both arms agree, the test looks clean, and it
+measured nothing. On one bench this invalidated an entire class of tests from one Mac — while a
+second machine on the same bench routed via the gateway and was a perfectly good instrument.
+
+**The instrument was wrong, not the environment.** Concluding "the bench cannot test this" from
+one host's defect is the same over-generalisation in reverse. Check the other hosts.
+
+This also threatens **cutover-night verification**: a technician checking inter-VLAN isolation
+from a Tailscale-connected laptop gets tunnel answers, so a working block reads as reachable and
+an allow passes without the policy participating. Verify from a device with Tailscale off.
+
+## Read `hits`, but never read its absence
+
+Every policy object carries `hits` and `last_hit`, and the populated counters are the cheapest
+real evidence available — they exposed a claim filed as "untested, zone empty by design" while
+five of its policies had matched thousands of packets.
+
+**An absent `hits` field proves nothing.** Note the distinction: these policies do not report
+`hits: 0`, the field is *missing*. A Guest DoT block reporting no counter was demonstrably
+matching packets at that moment — proven by toggling it. Missing instrumentation, not missing
+traffic.
+
+`last_hit` is worse: several policies report a real `hits` count alongside `last_hit: never`.
+Read `hits`; treat `last_hit` as decorative.
+
+## The strongest test of a policy is to turn it off
+
+Behaviour shows a port is shut. It does not show **what shut it** — and the hit counters may not
+tell you either. Toggle the rule:
+
+| policy state | `Guest → 1.1.1.1:853` |
+|---|---|
+| enabled | BLOCKED |
+| **disabled** | **REACHED** |
+| re-enabled | BLOCKED |
+
+Three data points, ~15 s of propagation each, and the causal claim is closed. Believing a rule
+works because its twin on another zone pair works is argument by symmetry — the exact thing
+per-zone testing exists to avoid.
+
+## Custom policies always precede the predefined allow
+
+A custom policy is created at `index: 10000`; the predefined `Allow All Traffic` for the same
+zone pair sits at `2147483647`. So a new custom rule is evaluated **ahead of** that baseline with
+no ordering work. The creation-order warning applies **between customs in the same zone pair** —
+create the ALLOW before the BLOCK — not against the predefined rules.
+
+Useful corollary when counting: the API returned 144 policies where only 19 were ours. The rest
+are predefined plus auto-created `(Return)` companions. When recording a count, record what was
+counted.
 
 ## Reference implementation
 
