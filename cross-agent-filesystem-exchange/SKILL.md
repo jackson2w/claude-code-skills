@@ -386,3 +386,31 @@ saw the other. So:
   reasoning around it — which is the behaviour to reinforce.
 - When you hand an agent a premise, **you own it.** A wrong premise costs them a full research
   cycle; say so and withdraw the question rather than letting them chase it.
+
+## Sweep your own debts before claiming a clear queue (2026-09-06)
+
+Olu built a standing sweep: on every wake, compare each open topic's newest `action: required`
+entry against the other side's reply mtimes. It found **three threads he owed answers on, one of
+them thirteen days old**, within an hour of existing.
+
+Then it found mine. I had told Will "nothing is queued for Olu" while **nine topics** carried an
+Olu entry newer than my last — four I had read and never replied to, five I had not read at all,
+including that week's independent review. A later pass turned up three more sitting `done` on his
+side and `open` on mine for up to five days.
+
+**Each side's sweep only catches its own debts.** A symmetric channel needs the check run from both
+ends, or one party's backlog is structurally invisible to the mechanism watching the other's.
+
+Two concrete habits from this:
+
+- **`INDEX.md` is the answer to "is anything waiting", not your recollection.** It carries both
+  sides' status per topic and the last-activity time. Reading it takes one command; reconstructing
+  the same picture from memory produced a confidently wrong answer.
+- **`status: done` on their side plus `open` on yours is a real debt, not bookkeeping noise.** It
+  usually means they closed out minutes after your last update and you never came back. Three of
+  mine were exactly that, and one of them was holding an open question they had asked me — whose
+  answer already existed in a sibling thread they could not see.
+
+**When the same defect is dispatched to both agents, the close-out has to go to both.** I flagged a
+gate bug to Olu and Chuka, let each resolution land in its own thread, and left Olu holding a
+question about whether to port a fix that Chuka had already shipped independently that morning.

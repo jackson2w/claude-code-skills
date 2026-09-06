@@ -280,3 +280,27 @@ skill); Olu's own `openclaw-anthropic.env` bundle on `dfw` (a hard classifier-bl
 different ownership boundary); Infisical's own bootstrap `.env` and Agent Vault's master password
 (unavoidable chicken-and-egg — the credential that proves identity *to* the store can't itself
 live in the store); `n8n-import-key.env` (confirmed zero real consumers, orphaned).
+
+## `secrets set NAME=@/path/to/file` is documented and does not work (2026-09-06)
+
+`infisical secrets set --help` advertises `<secretName=@/path/to/file>`. On the CLI version running
+here it is **not interpreted**: it stores the literal string `@/root/.config/whatever.key` and
+**exits 0**. Nothing about the command's output distinguishes this from a real write.
+
+Caught only by reading the value back and comparing lengths — 31 characters stored against a
+50-character source. Had the round-trip check been skipped, a credential in the vault would have
+been the *path to* the credential, and the failure would have surfaced later as an auth error at
+whatever consumed it.
+
+**Use `--file` with an `.env`-format staging file instead**, which keeps the value out of argv the
+same way the `@file` form was supposed to:
+
+```bash
+STAGE=$(mktemp); chmod 600 "$STAGE"
+trap 'shred -u "$STAGE" 2>/dev/null || rm -f "$STAGE"' EXIT
+{ printf 'NAME='; tr -d '\r\n' < "$KEYFILE"; printf '\n'; } > "$STAGE"
+infisical secrets set --file "$STAGE" --projectId=... --env=dev --domain=... --silent
+```
+
+**Always verify the round trip without printing the value**: read it back and compare lengths and
+equality in a single shell invocation (`[ "$v" = "$w" ]`), never by echoing either side.
