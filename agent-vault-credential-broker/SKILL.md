@@ -348,3 +348,60 @@ trips Claude Code's own auto-mode safety classifier, regardless of encoding — 
 run that one command themselves rather than retrying. A plain `cp` for backup/restore of the
 same file is not blocked (it's not writing new/modified content). Creating a brand-new file
 (e.g. a fresh `AGENT_VAULT_TOKEN`/`ADDR`/`VAULT` env file) has not been observed to trip it.
+
+## `HTTPS_PROXY` with a token and no password silently breaks every Python `requests` client
+
+**Found 2026-09-06 on Hermes, after roughly an hour spent blaming the wrong component three
+times.** The vendor guide's env shape is a URL with a **username and no password**:
+
+```
+HTTPS_PROXY=http://{{ agent_vault_token }}@{{ proxy_host_port }}
+```
+
+`urllib3` v2 (2.7.0 here, with `requests` 2.33.0) builds Basic proxy auth **only from a
+`user:pass` pair** — given bare `user@host` it sends no `Proxy-Authorization` header at all, and
+the proxy answers `407 Proxy Authentication Required`. `curl` sends the header regardless, so the
+two disagree about whether the proxy works.
+
+**The one-character fix** — a colon, making the empty password explicit:
+
+```
+HTTPS_PROXY=http://{{ agent_vault_token }}:@{{ proxy_host_port }}
+HTTP_PROXY=http://{{ agent_vault_token }}:@{{ proxy_host_port }}
+```
+
+Fix it in the **Ansible template**, then re-run the playbook and restart the unit. A hand-edit to
+the live env file is reverted by the next run — the controller is authoritative.
+
+### Why this is expensive to diagnose rather than merely obscure
+
+- **It is partial.** The agent's *model* calls keep working, because that transport uses a
+  different HTTP library. The service looks healthy, answers questions, and only its
+  `requests`-based tools (web search, fetchers, MCP clients) fail. Nothing points at a proxy.
+- **The error names the wrong thing.** `ProxyError('Unable to connect to proxy')` reads as an
+  egress or network fault. Direct egress works fine, which makes it look like the *destination*
+  hosts are blocked. Two wrong conclusions followed: "egress is firewalled", then "those hosts
+  need registering as vault services."
+- **`curl` through the same proxy exonerates it**, so the obvious probe reinforces the wrong
+  answer. Worse, a `curl` carrying *no* credentials returns the same `407`, which reads as "the
+  proxy is broken" — a healthy `agent-vault` was restarted on exactly that evidence.
+
+### The probe that actually settles it
+
+Run the failing client's **own library**, in the unit's **own environment**, printing the
+exception type with credentials scrubbed:
+
+```bash
+sudo bash -c 'set -a; source <gateway env path>; set +a; <venv>/bin/python3 - <<PY
+import requests, re
+def clean(s): return re.sub(r"//[^@/]*@", "//<redacted>@", str(s))[:200]
+try: print("OK", requests.get("https://mcp.exa.ai", timeout=12).status_code)
+except Exception as e: print(type(e).__name__, "|", clean(e))
+PY'
+```
+
+A `407` there is this bug. Confirm by retrying with the proxy URL rebuilt as `user:@host` — if
+that returns a real status code, it is settled without changing anything yet.
+
+**The general rule:** when one client through a proxy works and another does not, the proxy is
+not the variable. Reproduce with the **failing library**, never with `curl`.
