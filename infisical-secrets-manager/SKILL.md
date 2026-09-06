@@ -304,3 +304,36 @@ infisical secrets set --file "$STAGE" --projectId=... --env=dev --domain=... --s
 
 **Always verify the round trip without printing the value**: read it back and compare lengths and
 equality in a single shell invocation (`[ "$v" = "$w" ]`), never by echoing either side.
+
+## `set` and `delete` disagree about what a secret is by default
+
+`infisical secrets set` defaults to `--type shared`. `infisical secrets delete` defaults to
+`--type personal`. Same noun namespace, same project, opposite defaults — so a `set` followed
+later by a `delete` with otherwise-matching arguments silently addresses **two different objects**,
+and the cleanup fails while looking entirely correct.
+
+The failure message is the expensive part. Deleting something that does not exist returns:
+
+```
+• Unable to complete your delete request
+  If this issue continues, get support at https://infisical.com/slack
+```
+
+No cause, no object name, no status. Against a **scoped machine identity** this reads as an
+authorization denial — such a plausible story that it gets accepted without a second invocation.
+Confirmed 2026-09-06: it was reported to the user and to another agent as a capability limit
+("this identity can create and update but not delete") before `--type=shared` deleted the same
+value on the first try.
+
+**Always pass `--type=shared` explicitly to `delete`.** Anything written by `set`, by `--file`, or
+through the UI is shared unless someone deliberately chose otherwise.
+
+The transferable tell: **a real authorization failure from this CLI names authorization.** A
+message that names nothing is evidence of a missing object far more often than a missing
+permission. Before concluding an identity lacks a permission, try the operation once more with the
+object's type, path and environment stated explicitly — a scoped identity is such a satisfying
+explanation for a destructive operation failing that it substitutes for the check.
+
+Corollary for cleanup after any test that writes a value: confirm it is **gone** by listing, rather
+than trusting the delete's exit status or its error text. A leftover under a plausible-looking name
+is worse than no cleanup at all, because the next reader cannot tell it from something live.
