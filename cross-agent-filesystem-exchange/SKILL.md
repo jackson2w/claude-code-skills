@@ -239,6 +239,69 @@ own cron-context and future sessions get it durably), **and** have the human pas
 pointer directly into the live chat that's actively retrying the stale path. Don't rely on the
 channel post alone to reach an in-progress conversation.
 
+## Delegating research — the highest-value use of this channel
+
+Standing instruction from Will, 2026-09-06, after a night where it changed two outcomes:
+*"having olu and chuka do research feels like a major unlock. we should make this a standard part
+of the process."* Both agents run on capped-cost inference and sit idle most of the time, so the
+marginal cost of asking is near zero while the cost of *not* asking is serial work.
+
+**Treat parallel research as the default for any multi-part build, not as an escalation when
+blocked.** Dispatch before you need the answer — the poll cycle is ~2 minutes each way, so a
+question sent when you first notice it is usually answered by the time you reach it.
+
+### What to send
+
+Delegate anything that is **desk research**: undocumented API shapes, vendor behaviour, version-
+specific regressions, "is this a known issue", conflicting community guidance. Keep for yourself
+anything needing live access to the system under test — they can read the web, you can read the
+hardware, and that division is the whole value.
+
+### How to brief, because the brief determines the quality
+
+Every element below earned its place by producing a better answer:
+
+- **State what the answer will be used for.** "I'm about to build this on real hardware tonight"
+  produces different care than an abstract question.
+- **Ask for a verified/inferred split, explicitly.** Both agents will maintain it if asked and
+  blur it if not.
+- **Demand version specificity.** "A confident answer about Network 9.x would be worse than no
+  answer" is worth saying outright — stale-version guidance is the most common failure mode.
+- **Say that "not findable" is an acceptable answer.** Without this you get plausible
+  construction. With it you get an honest gap you can route around.
+- **Show your own calibration data.** Pasting confirmed facts ("here are four endpoints I
+  verified live") lets them pattern-match rather than start cold.
+
+### What it bought, concretely
+
+- Chuka established that a cross-subnet resolver means conntrack reverses a DNAT, so **no
+  masquerade rule was needed** — and that adding one "as cheap insurance", which was the next
+  thing about to happen, would have destroyed the per-client DNS attribution the entire migration
+  existed to deliver. It would have looked like it worked.
+- Olu recovered an undocumented API payload schema from community wrapper libraries after blind
+  probing had stalled. **Go to code that has to work before exhausting guesswork**: a library
+  cannot be approximately right about a payload. Every field he named validated first try, where
+  ~45 of my guesses had failed — the real names were semantically adjacent but lexically nowhere
+  near.
+- Chuka identified a cellular link's dial-up throughput as a probable un-activated SIM, using two
+  calibrations that killed the obvious alternatives — the carrier's published throttle floor was
+  5-7x higher than observed, and reviews put that hardware on that plan two orders of magnitude
+  faster.
+
+### One failure mode to expect
+
+**A failed agent run looks identical to a dropped message from outside.** A run that errors still
+consumes the poll's change signal, so the following ticks report `no_change` and it appears the
+message was never seen. It may simply be retrying. Do not conclude a delegated task was lost until
+well past a retry cycle — this was concluded wrongly once and corrected by the human, who could
+see the reply that had already landed.
+
+### Close the loop properly
+
+Tell them what you did with it and which part was load-bearing. Both agents visibly changed
+behaviour in response to specific feedback across a single night; a reply that just says "thanks,
+applied" teaches nothing about which half of the answer mattered.
+
 ## What NOT to relay through this channel
 
 Same escalation rule on every build: anything destructive, irreversible, or touching credentials
