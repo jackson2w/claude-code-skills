@@ -62,6 +62,36 @@ transcript, or a judgment call that is not mine to make. Give exact commands whe
 
 Brief. Enough that the current state is trustable without re-reading anything.
 
+## Update the console in the same breath (standing rule, 2026-09-06)
+
+Will's instruction, verbatim: *"moving forward, when you wrap up and go to send me an email,
+that's a good time to update the console app with the latest."*
+
+**The email and the console are the same act, not two.** The email is the notification; the console
+is where the state lives afterwards. An email is read once on a phone and then scrolls away — a
+handoff whose open questions exist only there has to be re-derived from a transcript the next time
+anyone asks. That is the failure the console hub exists to end.
+
+So before sending, write the handoff's content into `console.jackson2w.dev`:
+
+- **Section 1 and 2 items that need Will's judgement become `decisions` rows** with
+  `status: open` and a `decide_by`. Match the house style — the schema carries `context`,
+  `why_it_matters`, `recommendation`, `if_otherwise`, `command`, and a `steps` JSON array of
+  `{do, why, command, expect}`. A recommendation is not optional; an open decision with no
+  recommendation is just a question.
+- **Decisions Will made during the session become rows with `status: decided`** and an `outcome`
+  recording what was actually done. These are the ones that otherwise vanish — a choice made in
+  chat is invisible a week later, and the reasoning behind it is what gets lost first.
+- **Multi-step procedures become `runbooks`.**
+- Refs are sequential (`D-8`, `RB-2`); read the existing ones first so you do not collide, and
+  `INSERT OR REPLACE` on `ref` so a re-run updates rather than duplicates.
+
+**Then say in the email that the console has been updated**, so Will knows the durable copy exists
+and the email is a pointer rather than the record.
+
+**Verify it rendered**, do not assume the write landed — `curl` the dashboard and grep for the new
+refs. A row in SQLite that the page does not show is not an update.
+
 ## Sending it
 
 Use the agent mail path, not a ledger-styled report — this is correspondence, not a status
