@@ -78,8 +78,8 @@ Use plain `mv` for archiving, not `git mv` — a freshly-created `STATE.md` may 
 and `git mv` refuses to move an untracked-only directory; an unconditional `git add -A` + commit
 right after picks up the move regardless.
 
-**Auto-archive can file a reply before the other side reads it (found 2026-09-05 on `hermes`,
-still unfixed on both builds).** Archiving triggers purely on both `STATE.md` reading `done`, with
+**Auto-archive can file a reply before the other side reads it (found 2026-09-05 on `hermes`;
+fixed on both builds the same day — build it in from the start).** Archiving triggers purely on both `STATE.md` reading `done`, with
 no check that the newest entry has been *seen*. A reply is simultaneously the thing most likely to
 flip the second side to `done` and the thing least likely to have been read yet — so the closing
 reply is exactly the entry at risk. Live sequence: the other agent marked its side `done` while its
@@ -102,12 +102,40 @@ Two fixes, and the cheap one removes the common case on its own:
   invisible forever. That also makes the guard safe to ship with no migration. (Refinement from
   Olu, 2026-09-05, on the design as originally filed.)
 
+- **A hold must be discoverable from inside the inbox the held side polls.** This is the part
+  the first implementation got wrong, and it is worth stating separately because it looks like
+  documentation and is actually mechanism. The guard announced holds in `INDEX.md` at the repo
+  root — which no poller watches — so the first real hold was never released: the agent was woken
+  by the entry, read it, correctly stayed silent (the entry was `action: fyi`), and had no way to
+  learn that re-affirming `status: done` is what closes a topic. Write a `HELD.md` marker into the
+  **inbox** of whichever side owes the re-read. Mind the asymmetry: the marker lands in one
+  directory while the `STATE.md` that releases it lives in the other, because each side writes its
+  status into its own outbox. Make the marker self-describing — it then works for an agent whose
+  own notes you cannot edit.
+
+  A marker file inside the watched tree is a file the notify script also diffs, so close every
+  path that lets it look like traffic: exclude it from the change diff (otherwise it notifies
+  about itself every tick, forever), from entry counts, and from last-activity timestamps; leave
+  an existing one alone rather than rewriting it, so a standing hold doesn't churn git; delete it
+  before an archive so none reaches `done/`; and recompute it for every open topic on every run,
+  so a released or reopened topic loses it.
+
 Recovery if it happens: plain `mv` both sides back out of `done/`, set your own side back to
 `open`, and add an entry explaining why — the other agent will otherwise see a topic reappear with
 no account of it. Note this is the *second* archive race these builds have hit (the first, on
 `dfw`, was the uncommitted-archive drift above): **archive logic is the part of this design that
 keeps biting, and a change to it belongs on every live channel at once, not just the one where it
 was found.**
+
+**Test the guard through the real script, and assert it actually ran.** Both builds carry a
+20-case suite (`agent-exchange-guard-tests.sh`) that drives the notify script's own entry point
+against sandbox trees, wired into the playbook so it runs against the *deployed* copy on every
+play. One case earns its keep beyond the obvious ones: **re-affirming releases a hold** — without
+it, a guard that can only ever block looks identical to a working one. And the harness must fail
+loudly when the script exits non-zero: a script that dies before doing anything leaves exactly
+the evidence a correct no-op leaves — no archive, no marker, no notification — so every negative
+assertion passes on a crash. That is not hypothetical; it is what running the suite unprivileged
+looks like, since the notify script reads secrets from a root-only path and exits at line 1.
 
 Full working script: adapt `agent-exchange-notify.sh` from either live deployment (`dfw`'s
 `/srv/agent-exchange/`, or `hermes`'s `hermes-ansible` repo at
