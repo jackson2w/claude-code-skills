@@ -202,3 +202,16 @@ plumbing that keeps them honest.
   figure.
 - **better-documents** — communication principles applied while generating a document, deck,
   memo, or proposal rather than reviewed in afterwards.
+
+## Hooks (not skills)
+
+`_hooks/` holds Claude Code `PreToolUse` guard scripts, version-controlled here so they survive a
+machine rebuild and reach every machine with the skills. Unlike skills they are **not**
+auto-discovered: run `_hooks/install.sh` once per machine (idempotent; symlinks into
+`~/.claude/hooks/` and reports whether `~/.claude/settings.json` wires each hook). See
+`_hooks/README.md`.
+
+- **block-credential-dump.sh** — denies Bash commands that would print a secret into the
+  transcript: dump verbs against credential-shaped paths, and any command that prints a
+  `*_PROXY` value (Agent Vault embeds the agent token in `HTTPS_PROXY`). Both rules come from real
+  leaks that each cost a rotation.
