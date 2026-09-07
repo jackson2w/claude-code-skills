@@ -535,3 +535,42 @@ too (same spirit as OpenClaw's known-upstream-bug pattern, `openclaw/openclaw#12
 "first_name": "Chuka Hermes", ...}` — useful as a sanity check after any credential change
 (bot-token mixups have happened twice on this project's other Telegram bots during unrelated
 rotations; confirm the numeric `id` matches, not just that *some* bot responds).
+
+## Turn watchdog — the layer systemd, the stability check and the canary cannot see
+
+Built 2026-09-07 (`hermes-turn-watchdog-install.yml` in `hermes-ansible`). Two incidents motivated
+it: a 420-API-call runaway turn looping on empty probe results, and a corrupt `state.db` that made
+every scheduled turn die at its first write for ~90 minutes while `hermes-gateway.service` stayed
+`active`. In both, the *unit* was healthy and the *service* was dead. The watchdog is root-owned,
+script-only, reads `~/.hermes` read-only every 2 minutes, and never talks to a model.
+
+Facts about Hermes's storage that the design rests on, all verified on the box:
+
+- `~/.hermes/state.db` holds `sessions` (`id`, `source` in `cron|telegram|subagent|cli`,
+  `started_at`/`ended_at`/`last_activity_at` as epoch floats, `tool_call_count`,
+  `api_call_count`) and `messages` (`session_id`, `role` in `assistant|tool|user|session_meta`,
+  `tool_name`, `content`, `timestamp`). Cron sessions are named `cron_<jobid>_<ts>` and end with
+  `end_reason = cron_complete`. **A dead-but-unclosed session has `ended_at` null forever**, so
+  "stuck" must also require recent `last_activity_at`, or a stale row alerts every tick.
+- `~/.hermes/cron/executions.db` holds `executions` (`job_id`, `status` in
+  `completed|failed|unknown`, ISO timestamps, `error`) and `cron_incidents` — Hermes already
+  records per-job failures with an `error_sig`; read those rather than re-deriving from logs.
+- **`executions.pid` is the gateway's PID, not a per-turn process.** Turns are threads inside one
+  process, so there is no surgical kill; remediation is a gateway restart or nothing.
+- **`session_turn_leases` was empty while a DM turn was demonstrably in progress**, so it cannot
+  be the only "is a human talking to him right now" check. Also treat any non-cron session with
+  `last_activity_at` in the last 3 minutes as live.
+- `.recover` on a corrupt `state.db` emits the FTS5 virtual tables as `sqlite_master` inserts the
+  CLI rejects, leaving shadow tables and the `messages_fts_*` triggers behind; Hermes then falls
+  back to JSONL session storage with "shadow table already exists". Recreate both virtual tables
+  by hand (`content='messages'` and `content='messages_fts_trigram_src'`) and `rebuild`.
+- There is no `sqlite3` CLI on the box by default (installed ad hoc 2026-09-07 — not yet in
+  `hermes-ansible`); `/usr/bin/python3`'s `sqlite3` module is the always-available tool, and
+  `~/.venv` does not exist for the `hermes` user.
+
+Test it against a **copy** of the databases, never the live ones: `HTW_HERMES_HOME=<copy>
+HTW_STATE_FILE=<tmp> HTW_UNIT=no-such-unit.service HTW_LOG_FILE=<tmp>` plus
+`HTW_TELEGRAM_STUB=1` to exercise state/dedupe without paging anyone, and `--dry-run` for a
+read-only verdict. The first control run against live data will report whatever is genuinely
+standing; seed the dedupe state with a stub run before enabling the timer if those findings are
+already known and handled.
