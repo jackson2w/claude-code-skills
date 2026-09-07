@@ -246,3 +246,41 @@ so once the resolver's subnet is a LAN subnet the masquerade rule stops matching
 correct. But a DNS DNAT anchored on the **WAN IP** — the shape you would reach for to catch a
 hardcoded `8.8.8.8` — has hairpin semantics whose SNAT half rewrites sources, reintroducing exactly
 the mis-attribution you removed.
+
+## The gateway's own resolver follows WAN DNS — test it with an answer that identifies the responder
+
+On UniFi OS 5.1.31 / Network 10.6.101 the client-facing resolver (dnsmasq on every VLAN SVI)
+forwards to **whatever Internet 1's DNS is**, not to the per-network DHCP DNS setting and not to
+anything policy can reach. Proven 2026-09-07 after an earlier read said the opposite: that
+reading was taken inside the ~10–90 s propagation window, the third wrong conclusion that window
+produced in one build.
+
+Method that settles it in five minutes, reusable for any gateway resolver question:
+
+1. Pick domains that are **gravity-blocked yet resolve publicly** (`sqlite3 gravity.db "select
+   domain from vw_gravity where domain like 'ads.%' order by random() limit 12"`, then keep the
+   ones where `dig @1.1.1.1` returns an A record and `dig @<pihole>` returns `0.0.0.0`). The
+   answer then names the responder; a plain `example.com` looks identical from either.
+2. Baseline `dig @<gateway> <domain-1>`; confirm it shows in Pi-hole's **live** API
+   (`/api/queries`), not `pihole-FTL.db`, which lags.
+3. Change the lever (here: `PUT rest/networkconf/<wan id>` with `wan_dns_preference: manual`,
+   `wan_dns1: 1.1.1.1`), **wait 90 s**, query a never-used domain-2 — a real address means the
+   lever moved the resolver; `0.0.0.0` means it did not.
+4. Revert, wait, query domain-3, confirm `0.0.0.0` returns and Pi-hole logs it. Never leave a
+   bench in a changed state on the strength of the change's HTTP status.
+
+Consequence for a Pi-hole network: **set the gateway's WAN DNS manually to Pi-hole**, or every
+client that asks its gateway bypasses the filter. Zone policy cannot block `:53` to the gateway
+and a vlan-ingress DNAT excludes gateway-destined traffic, so this is the only lever. Boot order
+is not a failover risk: the WAN SLA probes `1.1.1.1`/`8.8.8.8` by address, so Pi-hole being down
+fails one probe of three and WAN stays up.
+
+## A WLAN change can silently move your instrument to another SSID
+
+Pinning `AMPJ-IoT-bench` to 2.4 GHz dropped its 5 GHz VAP; the Mac mini's `en1` auto-joined a
+*remembered* Guest SSID and the controller kept a stale IoT station entry for it. Every test from
+that interface would have measured Guest while labelled IoT. **Check `essid` in `stat/sta` before
+trusting any result from a WiFi leg**, and after any WLAN write. `networksetup
+-setairportnetwork` may also report "Could not find network" once from scan cache; power-cycle the
+radio and retry before concluding the SSID is not broadcasting — the AP's `vap_table` is the
+authority for that.
