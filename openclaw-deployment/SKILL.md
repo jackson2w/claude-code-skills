@@ -1538,3 +1538,29 @@ That asymmetry is what makes the trust split work: a root verifier outside the a
 **delivery** from the journal, while the agent asserts **content**, being the only party that can
 see the composed text. Full architecture, escalation model, and the failure-path tests in the
 `agent-delivery-canary` skill.
+
+## A root-owned system unit needs `OPENCLAW_SERVICE_REPAIR_POLICY=external` (2026-09-07)
+
+`openclaw onboard --install-daemon` writes a **user** unit (`~/.config/systemd/user/openclaw-gateway.service`);
+this project runs a hand-written root-owned **system** unit (`openclaw.service`, `agent-vault run`
+wrapper). That difference is the 2026-09-04 `doctor --fix` failure: doctor's maintenance entry
+verifies ownership of the *managed* unit via `systemctl --user`, sees a system unit with
+`LoadState=loaded`, seals the service definition and refuses ("Gateway service ownership or
+shutdown could not be verified"). openclaw/openclaw#140908 (P0, 2026-09-07) is the same chain on
+2026.9.2. The docs' answer for a system unit that owns the lifecycle is
+`OPENCLAW_SERVICE_REPAIR_POLICY=external`: doctor goes diagnostic-only for the service lifecycle
+and repairs state against a gateway *you* stopped. On `dfw` it is set in the unit and in a root
+wrapper, `/usr/local/sbin/openclaw-doctor`, which is the one sanctioned way to run doctor by hand
+(service user, service `HOME`, the policy exported). Stop the gateway through its owner first for
+anything that mutates. **Unverified by execution** on the maintenance gate itself as of writing
+(read-only `--lint --json` runs fine through it); the staging twin's first rehearsal settles it.
+
+Related, from the same day (Olu's trace of the 2026.8.2 dist): `openclaw update` classifies a
+system unit `foreign`, stops nothing, and refuses to run from inside the gateway process, so the
+safe hop on such a host is stop-via-owner → `update --tag <v> --yes --no-restart` → start.
+Migrations run inside the update's doctor pass, not at boot (boot only has refusal gates), so a
+bare restart after a manual `npm install -g` trips the gates without running the migrations.
+`update --dry-run` does not check migrations; `doctor --lint --all --json` does. Freeze knobs:
+`update.auto.enabled: false`, `update.checkOnStart: false`, `OPENCLAW_NO_AUTO_UPDATE=1`; there is
+no `update.pin` and `--tag` is not persisted, so the declared version lives in
+`dfw-ansible`'s `openclaw-gateway-install.yml`, which fails on a mismatch by design.

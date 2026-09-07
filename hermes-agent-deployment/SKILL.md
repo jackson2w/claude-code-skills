@@ -575,3 +575,32 @@ HTW_STATE_FILE=<tmp> HTW_UNIT=no-such-unit.service HTW_LOG_FILE=<tmp>` plus
 read-only verdict. The first control run against live data will report whatever is genuinely
 standing; seed the dedupe state with a stub run before enabling the timer if those findings are
 already known and handled.
+
+## Pinning the checkout — `hermes update` cannot, so Ansible does (2026-09-07)
+
+`hermes update` tracks `origin/main`, never a release tag, and moves a tag-pinned checkout back
+onto `main` (upstream #34514 closed P3 without a fix; #13603 rollback still open). On this
+project it is therefore never run; `hermes-ansible`'s `hermes-checkout-pin-install.yml` owns the
+checkout and `updates.check: false` stops the CLI suggesting it. Three facts that cost a wrong
+first run, worth knowing before building the same thing elsewhere:
+
+- **The installer's clone is shallow** (`git rev-parse --is-shallow-repository` → `true`,
+  `.git/shallow` lists boundary commits). On a shallow clone `git describe`, `merge-base
+  --is-ancestor` and `rev-list --count` all answer confidently and wrongly (`v2026.8.27` reported
+  "not an ancestor" of a HEAD built from it). `git fetch --unshallow --tags origin` once, metadata
+  only, before trusting any ancestry check.
+- **The "upstream <sha>" that `hermes --version` prints is NOT the commit the checkout was built
+  from.** It is `origin/main`'s tip at the last fetch (what an update would move to). The real
+  base is the parent of the first carried commit (`git rev-parse <carried>^`). Declaring the
+  printed sha as the base made the pin playbook refuse, correctly.
+- **Local patches belong on a branch, as commits.** The `trust_env` patch sat as an uncommitted
+  modification for a week; `hermes update` would have stashed it (`updates.non_interactive_local_changes:
+  stash`) and parked the carried commit onto `main` with a notice nobody reads. It now lives on
+  `local` beside the quarantine fix; `hermes-stability-check.sh` alerts on a dirty tree or a
+  base mismatch every morning. The "Local source patches don't survive `hermes update`" section
+  above still applies to any *new* patch until it is committed the same way.
+
+Also set the same day: `updates.pre_update_backup: full` (was `false`, i.e. no backup at all)
+and `tool_loop_guardrails.hard_stop_enabled: true`. v0.20.6 has no interactive-vs-cron split for
+the hard stop; it applies to DM turns too, at upstream's default thresholds (5/8/5). The
+per-turn `loop_caps` (50 web searches, 50 subagents) are always on regardless.
