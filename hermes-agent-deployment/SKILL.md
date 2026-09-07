@@ -564,9 +564,10 @@ Facts about Hermes's storage that the design rests on, all verified on the box:
   CLI rejects, leaving shadow tables and the `messages_fts_*` triggers behind; Hermes then falls
   back to JSONL session storage with "shadow table already exists". Recreate both virtual tables
   by hand (`content='messages'` and `content='messages_fts_trigram_src'`) and `rebuild`.
-- There is no `sqlite3` CLI on the box by default (installed ad hoc 2026-09-07 — not yet in
-  `hermes-ansible`); `/usr/bin/python3`'s `sqlite3` module is the always-available tool, and
-  `~/.venv` does not exist for the `hermes` user.
+- There was no `sqlite3` CLI on the box by default; it is now installed by
+  `hermes-system-deps-install.yml` (added 2026-09-07 after being needed mid-incident).
+  `/usr/bin/python3`'s `sqlite3` module is the other always-available tool, and `~/.venv` does
+  not exist for the `hermes` user.
 
 Test it against a **copy** of the databases, never the live ones: `HTW_HERMES_HOME=<copy>
 HTW_STATE_FILE=<tmp> HTW_UNIT=no-such-unit.service HTW_LOG_FILE=<tmp>` plus
