@@ -203,6 +203,14 @@ pattern transfers to another.
   for the specific var you need and treat proxy-shaped values as unsafe to display, or better,
   test functionally instead (source the env file into a subshell and make a real call, per the
   credential-rotation-protocol skill's safe toolkit, rather than ever printing resolved env).
+  **Recurred 2026-09-07 through a third command shape:** `grep -E '^(HTTPS?_PROXY|NO_PROXY)='
+  gateway.env`, run to compare a template change against the live file, printed the live
+  `hermes-gateway` token. `grep` is not in the hook's blocked list and the *intent* was a
+  non-secret proxy host:port. The only safe reads of an Agent-Vault env file are key names
+  (`cut -d= -f1`) and counts; anything that prints a `*_PROXY=` **value** is a token dump.
+  Rotated the same sitting via the recipe above (`agent rotate --token-only` → one-time file →
+  re-render playbook → restart); the old process's own `407`s in the minute before restart were
+  the proof the old token had died.
   Remediation if this happens: rotate the exposed agent's token immediately (`agent-vault agent
   rotate <name> --token-only`, piped straight into a fresh token file, never printed — see that
   command's own `--token-only` flag), re-render the consuming service's env via its existing

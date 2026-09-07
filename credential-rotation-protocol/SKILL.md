@@ -71,6 +71,15 @@ full investigation turn chasing a "maybe this bot got renamed" theory before a d
 compare (the method this skill already recommends) settled it in one shot — check the obvious
 row in the table above before inventing a more elaborate identity check.
 
+**A proxy URL is a credential when the proxy authenticates by userinfo.** `HTTPS_PROXY=http://
+<token>:@host:port` is the Agent Vault wiring shape on every agent host here, so `grep
+'^HTTPS_PROXY=' env` prints a live token — confirmed 2026-09-03 via `/proc/<pid>/environ` and
+again 2026-09-07 via a plain `grep` of `gateway.env`, both times while looking for a host:port.
+The safe-toolkit rows above already cover it (key names via `cut -d= -f1`, prefix via `cut -c1-N`
+of a *known non-secret* field only, hashes for equality); the trap is that a `*_PROXY` field does
+not *look* like a secret-bearing field, so the "is this field a secret?" question gets skipped.
+Treat every `*_PROXY=` line on an agent host as secret-bearing until proven otherwise.
+
 **Before building a fresh incident theory from raw verification, check whether this project has
 already documented the exact situation.** The same session above spent real effort hypothesizing
 about Telegram bot renames and client-side caching before re-reading this very skill file turned
