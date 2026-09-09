@@ -231,10 +231,30 @@ identity — reusing `ansible-ctrl`'s identity file across hosts is not how Infi
   didn't exist on disk at all despite being a scoped, supposedly-applied task. Both surfaced
   only because the weekly sweep's own `ansible_check`-style drift detection flagged them —
   re-running the two relevant idempotent playbooks (`pihole-dns-client.yml`,
-  `node-exporter.yml`, both `--limit infisical`) fixed both cleanly. Lesson: "closed all
-  touchpoints" at build time is a snapshot, not a guarantee — a host's first post-build
-  weekly sweep is worth checking for real, not just trusting the build session's own
-  self-report.
+  `node-exporter.yml`, both `--limit infisical`) fixed both. Lesson: "closed all touchpoints"
+  at build time is a snapshot, not a guarantee — a host's first post-build weekly sweep is
+  worth checking for real, not just trusting the build session's own self-report.
+
+  **Correction, 2026-09-07: the 9/3 fix above was itself incomplete, and the same bug
+  recurred.** "Killed the rogue binary" stopped the *process* but never removed its systemd
+  unit (`/etc/systemd/system/node_exporter.service`, `WantedBy=multi-user.target`, still
+  enabled). Left enabled, it silently raced `prometheus-node-exporter.service` for port 9100
+  on every subsequent boot — invisible the whole time because a stopped-but-enabled unit
+  isn't "failed," so `systemctl --failed` (what both the daily drift-check and weekly sweep
+  actually query) had nothing to report. Four days of clean checks later, the first real
+  reboot (an unrelated `pve` host apt/kernel upgrade, 2026-09-07) started every enabled unit
+  at once and crash-looped the real service to `start-limit-hit`. Fixed properly this time by
+  deleting the unit file, the orphaned binary, and its associated system user outright — not
+  just disabling. **General lesson for this whole fleet, not just Infisical**: on a rushed or
+  manually-touched build, "stop the process" and "remove what would restart it" are different
+  claims, and a fix that only does the first is invisible between reboots and silently
+  recurs at the next one. If a build session ever ran anything manually before the real
+  Ansible role converged the host, check `systemctl list-unit-files --state=enabled` for a
+  hand-created duplicate before calling the host settled, not just `systemctl --failed`.
+  This exact collision pattern is now caught automatically going forward — see
+  `weekly-housekeeping-checks.sh`'s `enabled_unit_dup_*` check (service category) and the
+  `post-reboot-verify.timer` on `ansible-ctrl`, which runs it fleet-wide within ~5 minutes of
+  any detected reboot (`project_post_reboot_verify` memory).
 - **Deployed-copy vs. git-tracked-source split.** Several hosts in this fleet keep a git-tracked
   script (e.g. `homelab-ansible/scripts/weekly-housekeeping-checks.sh`) separate from its actually
   *running* deployed copy (`/root/bin/weekly-housekeeping-checks.sh` on `ansible-ctrl`), synced
