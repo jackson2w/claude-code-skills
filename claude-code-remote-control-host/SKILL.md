@@ -143,6 +143,39 @@ WantedBy=multi-user.target
 - Root on the controller is already root on the fleet through the controller's deploy key, so
   "controller only" narrows the *path*, not the blast radius. Say so when presenting the option.
 
+### Hosts outside the Ansible inventory (external VPSes)
+
+The baseline-playbook route above only reaches hosts in inventory. For an external box — a VPS
+running an agent, holding real credentials — it does not apply, and root is the wrong default.
+Settled 2026-09-11 for `dfw`/`hermes`:
+
+- **Expect root SSH to be refused.** A hardened VPS runs `PermitRootLogin no`; the give-away is
+  `ROOT LOGIN REFUSED FROM <ip>` in its journal, which means the key matched and *policy*
+  declined — the key install was fine. Do not "fix" this by loosening a host-wide policy to
+  admit one key.
+- **Two accounts, not one.** `claude-admin`: sudo-capable, exists only so the RC host can run
+  Ansible there. `claude-diag`: the narrow one for routine reads — **no sudoers grant at all**
+  (`systemd-journal` group supplies `journalctl`, so no escalation path exists to widen later),
+  `restrict,command="..."` in `authorized_keys`, and a script that allowlists every argument it
+  turns into a command argument. Say plainly which one is the boundary: it is the script, not
+  the sudoers line.
+- **`shell: /usr/sbin/nologin` kills a forced command.** sshd runs `command="..."` *through* the
+  login shell, so `nologin` yields "This account is currently not available" and a dead account.
+  Use `/bin/bash` with a locked password (`password: '!'`); `restrict,command=` is what prevents
+  a shell, not the shell field. This shipped-broken in rehearsal and was only caught because the
+  playbook was tried against a throwaway host first — do that.
+- **A verification task that only checks `rc` can pass vacuously.** `failed_when: rc != 2` went
+  green against a *missing* script, because an absent file also exits 2. Assert on the refusal
+  *message* too, and let verification tasks skip under `--check` rather than forcing them to run
+  against a copy task that was simulated.
+- Both accounts carry a `present`/`absent` var for one-flag revocation, and the `claude-admin`
+  play asserts the key stays *out* of root's `authorized_keys`.
+- Point the service user's `~/.ssh/config` at the right account per host and backport it into the
+  install playbook — that file is Ansible-managed, so a hand edit is drift.
+
+Related: the `ssh-exposure-audit` skill (this work surfaced a real exposure on one of the two
+hosts; the account was the errand, the finding was the value).
+
 ## 6. Small traps, in the order they bit
 
 1. `git ls-remote --exit-code -h <repo> HEAD` **never matches**: `-h` restricts to
