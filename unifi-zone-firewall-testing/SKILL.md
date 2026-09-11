@@ -284,3 +284,44 @@ trusting any result from a WiFi leg**, and after any WLAN write. `networksetup
 -setairportnetwork` may also report "Could not find network" once from scan cache; power-cycle the
 radio and retry before concluding the SSID is not broadcasting — the AP's `vap_table` is the
 authority for that.
+
+## Schedule the undo before a change that can cost you the controller
+
+A network change can take away the path you would use to reverse it. Renumbering the management
+subnet is the clearest case: if devices do not re-inform at the new gateway address, the UI you
+would fix it from is the thing you just lost. **Snapshot and schedule the revert first, then make
+the change, then cancel the revert** — the same shape as the `systemd-run --on-active=` deadman
+used before a lockout-capable `ufw`/`sshd` change.
+
+Reference implementation: `scripts/unifi-deadman-revert.py` in the homelab planning repo, run on
+the bench observer host. `arm` snapshots the network object and schedules a restore; `disarm`
+cancels and wipes; `fire` restores and **verifies by reading back**, never by trusting the PUT's
+return code.
+
+Points that make it real rather than theatre:
+
+- **`fire` must not assume the controller is where it was at arm time** — the reason it is firing
+  is that addressing went wrong. Try every plausible address, and **authenticate** rather than
+  TCP-probe: something else answering on `:443` satisfies a socket test and proves nothing.
+- **Retry across a window.** A DHCP lease can take a minute to follow a subnet change.
+- **Unreachable is UNKNOWN, not success.** Exit non-zero and say the revert did not happen.
+  A deadman that reports success it did not achieve is worse than none.
+- **Refuse to arm without a good snapshot.** Armed-with-nothing is the worst state.
+- **Key in tmpfs, 0600, never in argv**, removed on disarm.
+- **Verify `disarm` against systemd's own view**, not the stop command's exit code.
+- **State the shared failure path in the tool's own output.** This host reverts *over the network
+  the change affects*; if its lease does not follow, the rescuer is stranded too. Good net for
+  "the change applied but the controller moved", no net for "the segment lost DHCP". Write that
+  where the operator will read it, or the tool's existence becomes false confidence.
+
+**Test the failure path, not just the happy one.** Point the candidate list at unroutable
+addresses and confirm it exits non-zero with an honest message.
+
+### `doh` is a settings row, not a field
+
+`GET /rest/setting` returns ~38 rows, each with a `key`. DNS-over-HTTPS is
+`{"key": "doh", "state": "off", "server_names": [...]}` — a **row whose `key` field is `"doh"`**,
+not a field named `doh` on some object. A parser scanning key *names* for `doh` finds nothing and
+reports "absent", which reads as reassuring and means nothing. `doh` on would bypass Pi-hole for
+gateway-originated queries, which a DNAT structurally cannot close, so a false "absent" here is
+expensive.
