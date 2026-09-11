@@ -232,3 +232,22 @@ marked working / blocked / idle, so a session waiting on input is visible withou
 - The integration is optional — herdr detects agent state by screen analysis without it; the hook
   only adds native session restore.
 - `herdr --skill` prints a skill file for driving herdr's own panes/agents via its socket API.
+
+### Two traps that only appear once someone actually uses the terminal surface
+
+1. **`~/.local/bin` is a login-shell-only PATH entry.** `~/.profile` adds it; `~/.bashrc` does
+   not, and is guarded against non-interactive shells anyway. So `claude` is **not found** in a
+   herdr/tmux pane (interactive, non-login) and **not found** under `ssh` `RemoteCommand`
+   (non-interactive, non-login). Fix with a guarded block in `~/.bashrc` for panes, and an
+   **absolute path** for `RemoteCommand`. Verify with `bash -ic`, **never `bash -lc`** — a login
+   shell is the one kind that was never in play, and checking that way certifies nothing. Put the
+   fix in the playbook; a hand-edited `~/.bashrc` dies at the next rebuild.
+
+2. **`claude --continue` will silently grab the session the Remote Control server is serving.**
+   It resumes the most recent session *for that directory*, and the RC server's sessions live in
+   the same store under the same user. The result is one conversation with two live front-ends —
+   exactly what the coexistence convention exists to prevent. **Use `claude --resume`**, which
+   lists sessions so a human chooses, and reserve `--continue` for a surface you know owns the
+   thread. Observed 2026-09-11 within minutes of the terminal surface existing: the terminal
+   resumed the phone's session and printed its own state summary, which read like a person asking
+   a question.
