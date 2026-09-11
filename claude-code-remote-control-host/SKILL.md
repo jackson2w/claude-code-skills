@@ -193,3 +193,42 @@ hosts; the account was the errand, the finding was the value).
    the units are Condition-gated.
 6. The fleet's weekly-sweep exposure arrays (`LOOPBACK_ONLY`/`LAN_OK`) have no entry for a
    host with no listener at all; that's correct, same as the Ansible controller.
+
+## 7. Terminal access alongside Remote Control, and herdr
+
+Remote Control has **no terminal client** — `claude --help` on 2.1.267 lists no subcommand that
+attaches to an RC server. The phone and claude.ai/code drive it; a terminal reaches the same work
+by **SSHing in and running `claude` there**, over the same `~/.claude` (credentials, memory repo,
+CLAUDE.md, skills). Two front-ends, one session store.
+
+- Grant the owner's workstation key directly to the **service user**, not just root
+  (`claude_rc_owner_pubkey` + a `present`/`absent` switch in `claude-code-install.yml`). It is not
+  a privilege increase where the same key is already on root, and it stops routine work happening
+  as root. `ssh <host>` then lands with the right PATH, memory and CLAUDE.md with no `sudo -iu`.
+- **Don't resume the same thread on two surfaces at once.** Settle a convention instead — the one
+  that holds here is *terminal primary, phone for check-ins and permission prompts.*
+
+### herdr
+
+`herdr` (herdr.dev, Apache-2.0) is a tmux-like multiplexer that is **agent-aware**: every pane is
+marked working / blocked / idle, so a session waiting on input is visible without cycling tabs.
+
+- **Install it on the host the agents run on, not the laptop.** Its value is the background server
+  that survives a dropped SSH connection (`prefix+q` detaches, `herdr` reattaches). A local
+  install with panes SSHing out still loses the remote processes on disconnect.
+- **It replaces tmux; it does not layer on it.** Both use the `ctrl+b` prefix — nesting means
+  double-prefixing every keystroke.
+- Installer is clean for a no-sudo service user: single static binary to `~/.local/bin`, SHA-256
+  verified against a manifest, touches no shell rc and no system path. `HERDR_INSTALL_DIR`
+  overrides the target.
+- **Check the live version, don't trust the README** — the GitHub README said 0.4.0 while the
+  installer shipped 0.9.0, and the two differ substantially (0.9.0 has `--remote`, named sessions,
+  and a socket API the older write-ups don't mention).
+- `herdr integration install claude` **merges** into `~/.claude/settings.json` rather than
+  replacing it — existing hooks survive, but diff it anyway. It adds one `SessionStart` hook that
+  guards on `HERDR_ENV`/`HERDR_SOCKET_PATH`/`HERDR_PANE_ID` and exits in ~3 ms when absent, so
+  **RC sessions driven from the phone are unaffected**. Verify that rather than assuming it: a
+  hook on `SessionStart` fires for every server instance on the box, not just terminal ones.
+- The integration is optional — herdr detects agent state by screen analysis without it; the hook
+  only adds native session restore.
+- `herdr --skill` prints a skill file for driving herdr's own panes/agents via its socket API.
