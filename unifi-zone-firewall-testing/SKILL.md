@@ -285,6 +285,25 @@ trusting any result from a WiFi leg**, and after any WLAN write. `networksetup
 radio and retry before concluding the SSID is not broadcasting — the AP's `vap_table` is the
 authority for that.
 
+## Testing Apple auto-join: private addresses are per SSID, and iOS picks its own network (2026-09-12)
+
+To test whether an iPhone or iPad rejoins an SSID after a WLAN change (e.g. WPA2 → WPA2/WPA3
+transition), you need the device's address **for that SSID**:
+- **Private Wi-Fi Address is per network.** A device has a different fixed private MAC on each SSID it
+  has joined. A recorded MAC from the Guest or IoT SSID can never match on the main one, so a check
+  comparing against it is guaranteed to fail whatever iOS does. Read it from the device (Settings →
+  Wi-Fi → ⓘ on *that* SSID → Wi-Fi Address), or from `rest/user` records whose
+  `last_connection_network_name` is that network and whose `first_seen` predates the change.
+- **With several known SSIDs in range, iOS joins whichever it prefers,** often the most recently used,
+  not the one under test. Turn **Auto-Join off on every other known SSID** (home network included), then
+  Wi-Fi off/on with no taps. Otherwise the "result" is a join to a different network.
+- **Pass criteria:** it associates to the tested SSID with no prompt or tap, `stat/sta` shows the same
+  private MAC as that SSID's pre-change `first_seen` record, and the device's own ⓘ page agrees. Check
+  `essid` on every observation, and say the SSID name in full when asking a person what they see:
+  "bench" and "guest bench" get conflated.
+- A watcher polling `stat/sta` should report **new** MACs too, not just the expected ones. A rotated
+  address shows up only as a stranger.
+
 ## Schedule the undo before a change that can cost you the controller
 
 A network change can take away the path you would use to reverse it. Renumbering the management

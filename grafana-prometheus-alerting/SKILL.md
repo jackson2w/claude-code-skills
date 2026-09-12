@@ -143,3 +143,34 @@ for g in json.load(sys.stdin)['data']['groups']:
 Clean up the throwaway unit afterward (`systemctl reset-failed <unit>` before removing the
 unit file — otherwise the failed state can linger in systemd's own bookkeeping even after the
 unit file is gone).
+
+## Proving the contact point delivers — Grafana 13.x test API (2026-09-12)
+
+To prove the *notification pipe* separately from rule evaluation, fire the contact point's test.
+Grafana 13.2 removed the old endpoint: `POST /api/alertmanager/grafana/config/api/v1/receivers/test`
+→ **HTTP 410**. The replacement is k8s-style:
+
+```bash
+B=http://<grafana>:3000/apis/notifications.alerting.grafana.app/v1beta1/namespaces/default/receivers
+NAME=$(curl -s -u "admin:$PW" "$B" | python3 -c 'import json,sys
+for i in json.load(sys.stdin)["items"]:
+    if i["spec"]["title"]=="<contact-point-title>": print(i["metadata"]["name"])')
+curl -s -u "admin:$PW" -H 'Content-Type: application/json' -X POST "$B/$NAME/test" -d '{
+  "integration": {"uid":"<integration-uid>","type":"telegram","version":"v1",
+    "settings": {"chatid":"<chat id>","parse_mode":""},
+    "secureFields": {"bottoken": true}},
+  "alert": {"labels":{"alertname":"delivery test","instance":"grafana"},
+            "annotations":{"summary":"Test, no action needed."}}}'
+```
+
+- **`metadata.name`** is a base64-ish encoding of the title, not the title and not the integration uid.
+- **`secureFields.bottoken: true`** reuses the stored token, so it never travels. Non-secret required
+  settings **must** be sent: leaving out `chatid` → 400 "could not find Chat Id in settings". Read it
+  from the provisioning file into a variable; don't print it.
+- **Auth:** a Viewer-role API token can't run the test; use admin credentials.
+- **`{"status":"success"}` means Grafana sent it, not that it arrived.** Confirm with the recipient.
+
+**Log trap:** `logger=ngalert.sender.router … "Sending alerts to local notifier"` means Grafana's
+**built-in Alertmanager**, which then routes per `policies.yaml`. It does *not* mean local-only
+delivery. Read the notification policy's root receiver before concluding an alert never reaches the
+contact point.
