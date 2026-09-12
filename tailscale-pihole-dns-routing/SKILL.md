@@ -554,3 +554,44 @@ meant to represent real client DNS behavior on macOS, not `dig` by itself. `dig
 @<specific-ip> <domain>` (with an explicit server) is still fine for testing one resolver in
 isolation — the gap is specifically bare `dig`'s use of `/etc/resolv.conf` as a stand-in for the
 system resolver, which it isn't.
+
+## By-name SSH can land on the tailnet address — and a Tailscale SSH host then hangs it forever (2026-09-12)
+
+On a host running systemd-resolved with Tailscale, a bare hostname doesn't resolve consistently.
+`getent ahosts pihole` returned the LAN IPv4 and a LAN IPv6, while `resolvectl query pihole` returned
+the **tailnet address via `tailscale0`**. Across two replays, 4 of 8 `ssh root@pihole` calls went over
+the tailnet.
+
+If the target has **Tailscale SSH on** (`tailscale set --ssh=true` / `RunSSH: true`), a connection
+arriving on its tailnet address is taken over by tailscaled. It prints:
+
+```
+# Tailscale SSH requires an additional check.
+# To authenticate, visit: https://login.tailscale.com/a/...
+```
+
+…and **waits indefinitely**:
+- `ConnectTimeout` never fires, because TCP already connected.
+- `BatchMode=yes` doesn't stop it.
+- The only trace is on the target: `journalctl -u tailscaled | grep "handling conn"` shows the
+  intercepted connection and its source tailnet IP.
+
+**Consequence:** a scheduled check script that reaches hosts by name, with no per-call or per-job
+timeout, hangs on the first such host. A systemd oneshot that never exits also blocks every later run
+of that unit, so one host with Tailscale SSH on silences the whole check **indefinitely**. It's
+silence, not an alert, and it happens *before* any RunSSH audit further down the script can report it.
+
+**Remedy (all four, not one):**
+1. **Bound every scheduled SSH call:** `timeout -k 5 <secs> ssh -o BatchMode=yes -o ConnectTimeout=10
+   -o ServerAliveInterval=10 -o ServerAliveCountMax=3 …`, via one shared helper. Set per-call limits
+   from a timed normal run.
+2. **Turn the hang into a finding:** rc 124 or that banner in stderr → a `fail` naming the host and
+   Tailscale SSH interception.
+3. **Run the RunSSH audit first**, over LAN IPs only, so its answer lands before anything can stall.
+4. **Add a job-level timeout that reports:** run the job under `timeout` *inside* the wrapper that
+   records and alerts, not only a unit `TimeoutStartSec`, which kills the wrapper too and leaves no
+   record.
+
+Keeping hostnames (rather than switching to LAN IPs) still exercises the route real automation uses,
+and interception now shows up as a finding. **To reach a host that has Tailscale SSH on, use its LAN
+IP.** When testing, arm the revert from a path that can't itself be intercepted.

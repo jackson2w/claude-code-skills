@@ -246,6 +246,22 @@ The path check takes `--dry-run` so the failing arm can be exercised without mai
 a health POST — needs the same two properties: a sender that can distinguish refusal from success,
 and a scheduled proof of life that alarms somewhere else.
 
+**Two follow-ups found 2026-09-12:**
+- **A host can run a stale copy of the shared lib.** Pi-hole's failover watcher had a pre-9/06 copy of
+  the lib, so its pages were still unchecked and unlogged months after the fix. Any host that sources
+  the lib needs the lib *in its own playbook's deploy list*. Grep a host's deployed copy for the
+  result-check before trusting its alerts.
+- **Bound the send itself:** `curl --connect-timeout 10 --max-time 20-30` on Telegram, Postmark and
+  webhook calls. A send with no timeout against a server that accepts and never replies hangs the
+  whole report job. Verified: rc 28 at 30 s with the flags, still hanging at 45 s without.
+
+**Verify sends without messaging anyone:** put a stub `curl` first on `PATH` that records each request
+(URL with the token redacted, and the body) and returns a canned response. Include a failing canned
+response to prove the non-zero path. The real send functions then run unchanged, which is stronger
+than an `if --dry-run; then echo` branch that skips them. **Install the stub only at the delivery
+step.** One dry run had it active during the checks too, so every HTTP health check "passed" against
+the stub.
+
 ## Wiring up a new automation
 
 1. Write (or reuse) a checks script that gathers raw data and decide: does turning that into the
