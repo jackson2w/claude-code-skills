@@ -357,3 +357,23 @@ explanation for a destructive operation failing that it substitutes for the chec
 Corollary for cleanup after any test that writes a value: confirm it is **gone** by listing, rather
 than trusting the delete's exit status or its error text. A leftover under a plausible-looking name
 is worse than no cleanup at all, because the next reader cannot tell it from something live.
+
+## A wrapper that injects a whole path gives every job every secret — name new secrets distinctly (2026-09-12)
+
+`infisical run --projectId=… --env=…` with no `--path` injects **every secret at the root path** into
+the job's environment, and so does every other host's wrapper reading the same project and env. On
+this fleet that meant ansible-ctrl's report scripts *and* seven wrapper-based units on another host
+all received a newly added secret.
+
+**So a generic name is a collision risk.** Adding `LUNAROUTE_API_KEY` for one consumer could shadow a
+variable of the same name that another consumer, on another host, expects to hold *its own* key.
+Before adding a secret:
+- Check which identities read that project, env and path, and which units use the wrapper
+  (`grep -l infisical-wrapper /etc/systemd/system/*.service` on each).
+- Grep those consumers' EnvironmentFiles and scripts for the proposed name (names only).
+- **Prefer a consumer-prefixed name** (`CLAUDE_CODE_LUNAROUTE_API_KEY`), even when no collision exists
+  today.
+
+Longer-term, per-consumer folders read with `--path` are the real isolation. A distinct name is the
+cheap guard until then. Every secret at a shared path is readable by every job that wrapper runs, so
+say so when adding one.
