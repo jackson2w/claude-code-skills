@@ -529,6 +529,44 @@ if either drops, the update reverted the patch and any vault-brokered credential
 that tool will silently start bypassing the proxy again. Worth filing upstream to Nous Research
 too (same spirit as OpenClaw's known-upstream-bug pattern, `openclaw/openclaw#128314`).
 
+## Narrow a `--monitor-script` so only real work wakes the agent (2026-09-12)
+
+A monitor that prints a raw directory listing changes on **every** filesystem event: archive moves, a
+peer's `STATE.md` rewrite, an ack entry. Each change wakes a full agent turn. On one inbox, ~35
+woken turns in 12 days ended `[SILENT]`, clustered right after a daily job acked and archived
+topics. Watch out for this before reading audit rows as billing bugs: `response_silent: true` means
+the monitor *did* see a change and the agent read everything, then had nothing to do. It's real input
+(usually 95–99% cached). Unchanged ticks never call the model and write no audit row.
+
+**Pattern: a seen-file, with output that changes only on qualifying additions.**
+- Compute the qualifying set: new numbered entries that are not `action: fyi` (a missing or unreadable
+  action line counts, failing toward waking), plus any `HELD.md` marker.
+- Compare with the previous tick's set stored in a seen-file. If it gained a member, rewrite a one-line
+  header `wake N: <new paths>`. **Removals never change the output**, but they do shrink the stored
+  set, so a path that disappears and reappears still wakes.
+- Write atomically (tmp + `mv`), with `2>/dev/null` *before* the `>` redirect so a failed open stays
+  silent. If the seen-file can't be written, print the raw set so a wake is never lost.
+- **Deploying it causes one wake** (the format change). The seed marks everything present as seen, so
+  confirm nothing unanswered is sitting in the inbox first; the job prompt should re-scan open topics on
+  any wake.
+- Test with `EXCHANGE_DIR`/`SEEN_FILE` overrides on throwaway copies, as the service user: fyi,
+  STATE.md and archive stay silent; a required entry, a HELD appearance or reappearance, a missing
+  action and an unreadable file all wake; a brand-new fyi-only topic stays silent; the unwritable
+  fallback works.
+- **Never run the monitor by hand against the real seen-file.** Like `hermes cron run`, it consumes the
+  next real tick's change signal.
+- **The side effect for writers:** anything the agent must act on has to be marked `action: required`,
+  so document that in the channel convention.
+
+**Script-only cron jobs (`--no-agent`) for canaries.** An agent-run canary is exposed to model drift.
+On one day the model invented commands that didn't exist (`~/.hermes/bin/canary-status`) instead of
+the prompt's real script, which produced false "status unavailable" lines, and several fires failed on
+provider 429s. A `--no-agent` job that runs the status script and formats the line itself removes both,
+at the cost of the anti-fabrication framing an agent turn gives. Running both side by side for a week,
+with a visible prefix such as `[script]`, is a cheap way to decide. When checking an existing job's
+name before create, avoid names that substring-match another job's (the create guard greps `cron
+list`).
+
 ## Telegram identity
 
 `getMe` against the live bot token returns `{"id": 8810663021, "username": "DFWHermesBot",

@@ -529,6 +529,23 @@ so a malformed line still reveals *that* it's wrong (and its length) without eve
 content. See the global CLAUDE.md's "never cat-then-redact" gotcha — this is the same failure
 mode, just via a pattern-matched redaction script instead of a raw `cat`.
 
+### Non-chat provider use is invisible to a `model-fetch` journal grep (2026-09-12)
+
+The two subsystems above (Groq audio transcription and OpenAI `memory_search` embeddings) **don't
+emit `model-fetch` journal lines.** An audit that counted `provider=openai`/`provider=groq` model-fetch
+lines over 7 days found zero and nearly retired both keys. The agent then checked its live config:
+embeddings ran on every memory recall, and voice notes were being transcribed through Groq days earlier.
+
+Before calling any provider key unused, check every capability it can back:
+- `models.providers`, the model and fallback chains, and per-cron overrides
+- `tools.media.models` (audio, image)
+- `memorySearch.provider`, and whether its default applies
+- `plugins.allow` / enabled provider plugins
+
+The service account's config is usually off-limits to the operator, so **ask the agent to check its own
+live config.** Removing a key also needs its capability re-pointed first. An unconfigured capability in
+the media fallback chain can silently bill a more expensive provider.
+
 ## PEP 668 (`EXTERNALLY-MANAGED`) blocks pip for Python-based skills too
 
 Some ClawHub skills (AgentMail, others with Python SDKs) need `pip install <package>` to actually
@@ -1339,6 +1356,26 @@ update offset <N> and starting fresh.
 
 Verify clean via `journalctl -u openclaw.service --since <restart-time> | grep -i telegram` —
 should show the two lines above and nothing matching `unauthorized|401|exited|auto-restart`.
+
+## Does a release contain a fix? Compare call order in the published `dist`, not a comment grep (2026-09-12)
+
+The upstream fix for a recurring cron error (`Failed to remove unused run continuation … competing work
+in flight`) was identified on `main` by a source comment, but **the bundled `dist` strips comments**.
+Grepping two published versions for that comment found it in neither, which proves nothing. What
+decided it was the code order inside the post-run `finally`:
+- 2026.8.2 (`dist/isolated-agent-*.js`): `removeCronRunContinuationSessionIfIdle()` L1552, then
+  `sessionWorkAdmission.release()` L1563. It deletes while its own admission is still held, which is
+  the race.
+- 2026.9.4 (`dist/isolated-agent-*.mjs`): release L1507, then remove L1510. **Fixed.**
+
+Method, with nothing installed:
+```bash
+T=$(mktemp -d); cd "$T"; npm pack openclaw@<ver> --silent
+mkdir <ver> && tar -xzf openclaw-<ver>.tgz -C <ver>
+grep -nE "<fnA>\(|<fnB>\(|finally ?\{" <ver>/package/dist/<chunk>
+```
+Do this in a temp dir outside the service account's home. The error was log noise only (every run
+`ok`), which is itself a reason to schedule the upgrade calmly rather than rushing it.
 
 ## OpenClaw has a real background auto-updater (`update.auto.enabled`) — check it, but verify before blaming it
 

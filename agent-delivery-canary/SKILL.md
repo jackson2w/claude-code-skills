@@ -119,6 +119,22 @@ Two constraints on the agent's implementation:
 Those enriched fields are **self-reported convenience, not evidence**. Delivery remains the only
 externally-verified signal, which is exactly why the verifier does not read them.
 
+### When the agent-side sender drifts: an agent-run vs script-only canary (2026-09-12)
+
+The agent-side half is itself exposed to model behaviour:
+- **Invented commands:** in one day's fires the model skipped the prompt's real status script and made
+  up commands that didn't exist, producing false "status unavailable" lines.
+- **Provider 429s** failed several fires outright.
+- **A warning emoji tied to benign conditions** (scheduled restarts, stale error counts) fired on 55% of
+  messages and stopped carrying information. Tie the warning to the one branch that means "could not
+  determine status".
+
+A script-only sender (e.g. `hermes cron … --no-agent`) that runs the status script and formats the line
+itself removes the drift and the lane contention. It also gives up what an agent turn adds: proof the
+agent's own dispatch path works, and fields the agent composes. Don't switch blind: run both side by side
+with a visible prefix (`[script]`) for a week, count false warnings and failed fires, then keep one.
+Either way the verifier stays out of process.
+
 ## Mutual liveness: the only layer that survives its subject being dead
 
 Every other check runs *on* the host it monitors. A wedged, crash-looping, or offline host emits
