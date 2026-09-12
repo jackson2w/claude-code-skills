@@ -71,6 +71,23 @@ into a script; don't assume the two forms match (this is the same quoting idiom 
 `dns.hosts` — see the `pihole-local-dns-records` skill — but that key's *values* are themselves
 `"IP HOSTNAME"` strings, so its round-trip masked the same underlying asymmetry differently).
 
+## Every `dns.upstreams` change restarts pihole-FTL
+
+Changing `dns.upstreams` doesn't hot-reload. FTL logs `Restarting FTL due to change of
+dns.upstreams`, then does a full internal restart, which means **~0.6s with no DNS at all, plus a
+flushed cache**. In FTL v6.7 the key is defined with `FLAG_RESTART_FTL` (`src/config/config.c`), a
+property of the key itself, so the CLI (`pihole-FTL --config`), the API and a direct TOML edit all
+behave the same. There's no supported no-restart path.
+
+What follows for a failover design:
+- A failover and its recovery each cost one short total outage. Measured in the homelab's forced
+  test on 2026-09-12: ~7.7s of failed uncached lookups before the switch, then ~0.6s dark at each
+  restart.
+- Never write the key unless the value actually changes (the idempotency check above).
+- Don't "fix" it by keeping two upstreams configured permanently. That's exactly the standing
+  silent fallback the constraint forbids.
+- Make the probe resistant to false positives, since every false failover is a real outage.
+
 ## Designing resilience without violating a "no silent fallback" constraint
 
 If the environment has a standing rule like "DNS failures should surface, not be silently
@@ -83,8 +100,18 @@ signal that anything is wrong.
 health-checked, alerted, actuated failover**, not a standing blend:
 
 1. Steady state: primary resolver only, single upstream, unchanged from a no-fallback baseline.
-2. A watcher (systemd timer, ~30s interval) runs a **real query** against the primary — not just
-   `systemctl is-active`, which misses a wedged-but-running resolver (e.g. broken root hints).
+2. A watcher (systemd timer, ~15s interval, with a `flock` so runs can't overlap) runs a **real
+   query** against the primary, not just `systemctl is-active`, which misses a wedged-but-running
+   resolver. Three traps, all found in the homelab's own watcher on 2026-09-12:
+   - **Require an actual answer, not a zero exit code.** `dig` exits 0 on SERVFAIL, so an
+     exit-code-only probe reads the broken-root-hints case as healthy. Pipe `+short` output through
+     `grep -q .`.
+   - **Probe TCP as well as UDP** (`dig +tcp`). FTL talks to its upstream over TCP too, and a
+     UDP-only probe was blind to a real 2026-07-22 failure where TCP connections were reset while
+     UDP still answered.
+   - **Two attempts per protocol within a run** (2s each), so one dropped packet doesn't fail over.
+     A failover restarts FTL (below), so false positives cost real outages. Keep the worst-case
+     probe time inside the interval; the homelab measured 8.1s against a blackholed host.
 3. On a genuine health-check failure: **clean cutover** (replace the upstream entirely, don't
    blend) to the secondary, plus an **immediate alert** (Telegram, PagerDuty, whatever's already
    wired up) — the human is told the instant the fallback engages, not after the fact via a
