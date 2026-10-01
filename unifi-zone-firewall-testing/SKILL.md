@@ -1,6 +1,6 @@
 ---
 name: unifi-zone-firewall-testing
-description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh".
+description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh", "secondary WAN DNS leaks around Pi-hole", "failover bypasses DNS filter", "wan_dns_preference per WAN entry", "U5G DNS not manual", "DNS redirect works but clients get no answer", "destination's own firewall blocks redirected VLAN", "Pi-hole local nftables allow-list missing subnet", "DNAT and zone policy pass but service still unreachable", "reorder firewall policies API", "batch-reorder", "move rule above block UniFi", "hit counter moved after reorder".
 ---
 
 # Testing UniFi zone firewall policies so the results mean something
@@ -200,6 +200,21 @@ Three data points, ~15 s of propagation each, and the causal claim is closed. Be
 works because its twin on another zone pair works is argument by symmetry — the exact thing
 per-zone testing exists to avoid.
 
+## Reordering existing rules, and what it does to `hits`
+
+The API ignores `index` on create (new rules append to their zone pair), but existing rules *can*
+be reordered: `PUT /proxy/network/v2/api/site/default/firewall-policies/batch-reorder` with
+`{"source_zone_id", "destination_zone_id", "before_predefined_ids": [...], "after_predefined_ids":
+[...]}` — the full list of the pair's custom rule ids in the order wanted. Found 2026-09-28 in the
+Network UI's own bundle (`swai.<hash>.js`, served from `/proxy/network/manage/react/js/`, fetched
+with the `X-API-KEY` header), after guessed `ordering` URLs 404'd as policy ids. Proven on
+production the same day: create, then batch-reorder, then read the order back.
+
+**Hit counters follow the position, not the rule.** After moving a new allow above an existing
+block, the block's `hits=3` appeared on the allow and the block showed none. Counts are not
+comparable across a reorder — the "Read `hits`" advice above holds only for a pair whose order
+hasn't changed since the counts accrued.
+
 ## Custom policies always precede the predefined allow
 
 A custom policy is created at `index: 10000`; the predefined `Allow All Traffic` for the same
@@ -274,6 +289,54 @@ client that asks its gateway bypasses the filter. Zone policy cannot block `:53`
 and a vlan-ingress DNAT excludes gateway-destined traffic, so this is the only lever. Boot order
 is not a failover risk: the WAN SLA probes `1.1.1.1`/`8.8.8.8` by address, so Pi-hole being down
 fails one probe of three and WAN stays up.
+
+## Every WAN entry has its own DNS lever, and a secondary one only gets tested by an actual failover
+
+The lever above (`wan_dns_preference`/`wan_dns1` on `rest/networkconf`) exists **per WAN entry**,
+not once per gateway. Confirmed on cutover night, 2026-09-28, production hardware (UniFi OS
+5.1.31): `Internet 1` had been set to `manual`/Pi-hole correctly, but the U5G cellular backup
+entry (`UniFi 5G A`) was still `auto` — silently following the carrier's own DNS. Nothing on the
+bench or in the pre-cutover build exercised this, because nothing forced a real failover: the
+primary WAN was always up, so the backup entry's DNS setting was configuration nobody had ever
+asked to prove.
+
+**Falsified live, not assumed:** `dig @<gateway> <domain>` while failed-over answered a real
+public IP (`151.101.114.189`) instead of Pi-hole's `0.0.0.0` — every device on every VLAN would
+have resolved straight past the filter for the duration of any failover, with no error, no log
+entry pointing at DNS, and a gateway that reported the failover itself as fully healthy.
+
+**The check every WAN-redundant Pi-hole deployment needs, and the bench cannot give you:** for
+each WAN entry beyond the first, either force a real failover and repeat the domain-that-
+identifies-the-responder test above against it specifically, or at minimum read back
+`wan_dns_preference`/`wan_dns1` on that entry's `networkconf` object before trusting it. A second
+WAN entry's DNS setting is exactly as easy to leave on `auto` as the first one was to fix — it is
+just harder to notice, because it only matters during an outage.
+
+## A DNAT + zone-policy pass on the gateway proves nothing about the destination's own firewall
+
+The `IoT/Guest → Pi-hole DNS` carve-out in this build was verified structurally (`networkconf`
+zone membership, DNAT rule, matching allow policy — see the DNAT section above) and then
+behaviourally on cutover night: the redirect worked, the zone policy passed traffic, Pi-hole was
+reachable on `:53` from every VLAN **exactly as designed** — and IoT and Guest clients still got
+no DNS answers at all, for hours, before anyone thought to look at Pi-hole itself.
+
+**Root cause: Pi-hole's own host firewall (`/etc/nftables.conf`, unrelated to UniFi, predating
+the VLAN migration by months) allow-listed query sources by subnet** — `{192.168.50.0/24,
+100.64.0.0/10}` only. Every UniFi-side check (DNAT rule enabled, zone policy allowing the flow,
+packets actually arriving at `192.168.50.53:53`) is blind to this: from the gateway's perspective
+the traffic was delivered correctly. The drop happened one layer further in, at the destination
+host's own packet filter, which the entire zone-firewall test suite in this skill has no way to
+see.
+
+**Generalizes beyond Pi-hole:** any DNAT or zone-policy build that redirects traffic to a service
+with its own host-level firewall (nftables, iptables, ufw, a cloud security group) needs that
+service's own allow-list checked against the **new** set of source subnets a VLAN migration
+introduces — a UniFi-side pass is necessary but not sufficient. The bench never caught this
+because the bench's own IoT/Guest test devices were, at the time the local firewall was written,
+years away from existing; nothing re-audited the destination once new source subnets were added
+upstream of it. Fix pattern: `sudo nft list ruleset` (or the host's equivalent) on the actual
+destination, not just on the gateway, whenever a redirect's target predates the VLANs now sending
+it traffic.
 
 ## A WLAN change can silently move your instrument to another SSID
 

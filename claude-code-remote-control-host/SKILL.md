@@ -46,7 +46,12 @@ memory. This skill is the durable "how" and every trap hit building it.
   restart brought the same session back on the phone. Crashed *sessions* (not the server) are
   re-served when a device sends them a message.
 - No crash auto-recovery of the server itself, and the server **exits after ~10 minutes of lost
-  API reachability**. systemd `Restart=always` covers both.
+  API reachability**. systemd `Restart=always` covers both — **but not past the start limit.**
+  With `StartLimitBurst=6` in 30 min at `RestartSec=30s`, any network outage longer than ~3.5
+  min leaves every server `failed` for good: after the 2026-09-27 UniFi cutover all three sat
+  dead for 20 h. Pair the limit with a recovery timer (below). Don't reach for
+  `RestartSteps=`/`RestartMaxDelaySec=` backoff instead: its counter (`NRestarts`) resets only on
+  a manual start, so weeks of routine relay drops would push every restart to the maximum delay.
 
 ## 2. Host shape
 
@@ -93,6 +98,21 @@ TimeoutStopSec=30s
 [Install]
 WantedBy=multi-user.target
 ```
+
+Recovery for instances that hit the start limit — `claude-rc-recover.service` (oneshot) +
+`.timer` (`OnBootSec=10min`, `OnUnitActiveSec=15min`), in `homelab-ansible`'s
+`claude-code-install.yml`:
+
+```sh
+for u in $(systemctl list-units "claude-rc@*" --state=failed --plain --no-legend | cut -d" " -f1); do
+  systemctl is-enabled --quiet "$u" || continue   # a unit stopped by hand is inactive, not failed
+  systemctl reset-failed "$u"; systemctl start --no-block "$u"
+done
+```
+
+A broken state (expired login) then costs one burst of ≤6 attempts per 15 min, not a 30 s loop,
+and a transient outage heals within 15 min of the network returning. The watchdog on
+`ansible-ctrl` re-alerts a persisting failure every 6 h, so a dead server can't sit unnoticed.
 
 - **`ConditionPathExists` on the login file** keeps instances *inactive* (a skip, not failed,
   not restart-looping) until the owner's login exists. Enable them in Ansible without
@@ -231,6 +251,13 @@ marked working / blocked / idle, so a session waiting on input is visible withou
   hook on `SessionStart` fires for every server instance on the box, not just terminal ones.
 - The integration is optional — herdr detects agent state by screen analysis without it; the hook
   only adds native session restore.
+- **Surviving a reboot (2026-09-30/10-01):** a client-launched `herdr` server dies with the host.
+  `herdr.service` (system unit, `User=claude`, `ExecStart=herdr server`, in
+  `claude-code-install.yml`) brings it back at boot and **restores saved panes headless, before any
+  client attaches**, each re-running `claude --resume <id>`. Two traps: Claude Code **never persists
+  trust for the home directory**, so a pane in `~` stops at the trust prompt on every restore; and
+  herdr saves the cwd a pane was **created** with, so `cd` inside it changes nothing. Create the
+  workspace with `herdr workspace create --cwd ~/projects/<name>`.
 - `herdr --skill` prints a skill file for driving herdr's own panes/agents via its socket API.
 
 ### Two traps that only appear once someone actually uses the terminal surface

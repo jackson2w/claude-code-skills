@@ -120,6 +120,14 @@ was luck, not something the process guaranteed, and isn't a reason to skip the s
    it leads to proposing remediation work (a rotation, a fleet-wide push) against hosts that were
    never actually affected. Verify presence on every candidate host; don't infer it from what
    "should" be true given other project conventions.
+   **Apps that keep their own copy count too, and they fail silently.** Found 2026-09-28: Uptime
+   Kuma on the iMac held the homelab bot token in its own SQLite (`notification.config`), not in
+   Infisical or any file a fleet grep would find. The bot's rotation (most likely the 2026-08-29/30
+   one) never reached it, so every Kuma alert since got a 401 — no error in Kuma's log, nothing in
+   the fleet's `telegram-path-check` (which only sees `ansible-ctrl`'s sends). Surfaced only when a
+   deliberate Pi-hole outage produced no alert. Verify a rotated token **from inside each
+   consumer** (for Kuma: a `getChat` run in its container with the token it has stored), not
+   once from wherever the new token was minted.
 2. **Generate the new credential** wherever it's actually minted (dashboard, BotFather, `openssl
    rand`, etc.). **If more than one similarly-named/similarly-purposed credential of the same
    type exists (e.g. two Telegram bots), name the exact identifier explicitly before the human
