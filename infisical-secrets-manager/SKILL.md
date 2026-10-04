@@ -1,6 +1,6 @@
 ---
 name: infisical-secrets-manager
-description: This skill should be used when migrating a credential off a plaintext .env file onto self-hosted Infisical (the fleet secrets-management platform — distinct from Agent Vault, its separate MITM-proxy product), when provisioning a new host's Infisical machine identity, when debugging an `infisical-wrapper.sh`/`infisical-get.sh` fetch failure, or when auditing which fleet credentials still live in plaintext. Trigger phrases include "infisical secrets manager", "infisical-wrapper.sh", "infisical-get.sh", "infisical machine identity", "infisical login universal-auth", "homelab-fleet project", "migrate credential to infisical", "retire .env file", "Injecting N Infisical secrets", "infisical secrets get", "lookup('pipe', '/root/bin/infisical-get.sh", "deployed-copy vs git-tracked-source".
+description: This skill should be used when migrating a credential off a plaintext .env file onto self-hosted Infisical (the fleet secrets-management platform — distinct from Agent Vault, its separate MITM-proxy product), when provisioning a new host's Infisical machine identity, when debugging an `infisical-wrapper.sh`/`infisical-get.sh` fetch failure, or when auditing which fleet credentials still live in plaintext. Trigger phrases include "infisical secrets get empty", "secret not found exit 0", "*not found* infisical", "infisical secrets manager", "infisical-wrapper.sh", "infisical-get.sh", "infisical machine identity", "infisical login universal-auth", "homelab-fleet project", "migrate credential to infisical", "retire .env file", "Injecting N Infisical secrets", "infisical secrets get", "lookup('pipe', '/root/bin/infisical-get.sh", "deployed-copy vs git-tracked-source".
 ---
 
 # Infisical secrets manager — fleet credential migration
@@ -377,3 +377,17 @@ Before adding a secret:
 Longer-term, per-consumer folders read with `--path` are the real isolation. A distinct name is the
 cheap guard until then. Every secret at a shared path is readable by every job that wrapper runs, so
 say so when adding one.
+
+## `secrets get --plain` exits 0 with an empty line for a secret that does not exist
+
+Infisical CLI 0.43.x: `infisical secrets get NAME --plain` for a missing NAME prints an empty line and
+**exits 0**. The table and JSON forms show the API's sentinel instead (`--output json` gives
+`[{"secretKey":"NAME","secretValue":"*not found*"}]`). So any `lookup('pipe', 'infisical-get.sh NAME')`
+with a typo templated a **blank credential** onto a host with no error. Fixed 2026-10-04 in all three
+`infisical-get.sh` copies (homelab-ansible `704dcbf`, dfw-ansible `7ff249f`, hermes-ansible `b9fd7d0`):
+they read `--output json`, check the shape (exit 5 if unexpected) and the `*not found*` sentinel (**exit 4**,
+nothing on stdout, a message on stderr), then print with `jq -r`. That output is byte-identical to
+`--plain`, verified by sha256 over all 38 secrets on ansible-ctrl and dfw, and the value never goes
+through argv or a `$( )`. An Ansible pipe lookup on a missing name now fails the task ("returned 4").
+**Anything new that calls the CLI directly needs the same check**; don't test existence by exit code alone.
+
