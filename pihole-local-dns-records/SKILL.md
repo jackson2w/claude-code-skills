@@ -1,6 +1,6 @@
 ---
 name: pihole-local-dns-records
-description: This skill should be used when configuring Pi-hole so devices show by friendly name instead of raw IP in the dashboard/Top Clients/Query Log, when the "List of configured clients" (Group Management > Clients) Comment field doesn't seem to change any display elsewhere, when identifying an unlabeled/mystery device on the network without router access, when a dashboard label doesn't update even though the dns.hosts record looks correct, or when managing dns.hosts declaratively via Ansible. Trigger phrases include "pi-hole map traffic to devices", "pi-hole client names in dashboard", "pi-hole Local DNS Records", "dns.hosts pihole.toml", "pihole-FTL --config dns.hosts", "client comment not showing in dashboard", "pihole network table discover devices", "identify unknown device on network", "what is this IP/MAC", "dns-sd companion-link", "mdns bonjour identify device", "private wifi address randomized mac", "dashboard name not updating", "pihole query log lag".
+description: This skill should be used when configuring Pi-hole so devices show by friendly name instead of raw IP in the dashboard/Top Clients/Query Log, when the "List of configured clients" (Group Management > Clients) Comment field doesn't seem to change any display elsewhere, when identifying an unlabeled/mystery device on the network without router access, when a dashboard label doesn't update even though the dns.hosts record looks correct, or when managing dns.hosts declaratively via Ansible. Trigger phrases include "pi-hole map traffic to devices", "pi-hole client names in dashboard", "pi-hole Local DNS Records", "dns.hosts pihole.toml", "pihole-FTL --config dns.hosts", "client comment not showing in dashboard", "pihole network table discover devices", "identify unknown device on network", "what is this IP/MAC", "dns-sd companion-link", "mdns bonjour identify device", "private wifi address randomized mac", "dashboard name not updating", "pihole query log lag", "dns.hosts restarts FTL", "maxDBdays not trimming".
 ---
 
 # Pi-hole 6: making devices show by name, not IP
@@ -226,3 +226,15 @@ space before `]`, confirmed byte-for-byte via `cat -A`. Building that same strin
 desired Ansible list and comparing directly avoids needing to parse TOML/JSON in Ansible at all.
 Verified for real idempotency both directions: manually drifting the live config produces
 `changed=1` and repairs it; running again immediately after shows `changed=0`.
+
+## Every dns.hosts change restarts FTL — and resets the old-query cleanup timer
+
+`pihole-dns-hosts.yml`, the API, and `pihole-FTL --config dns.hosts ...` all make FTL log
+`Reloading config due to pihole.toml change`, then `Shutting down` and restart. That's a
+second-long DNS gap; the replica, or Tailscale's dual nameservers, cover it. The less obvious cost
+is that FTL v6 deletes queries older than `database.maxDBdays` **only in the 03:xx hour (the LXC is
+UTC) and only once FTL has been up 24 h**. `lastDBdelete` starts at FTL's start time. So a
+dns.hosts edit, or any FTL restart, postpones the cleanup by at least a day, and frequent edits
+can postpone it indefinitely (2026-10-02/03: two restarts, no trim). A Unbound HUP reload does
+**not** restart FTL. Check a trim with `count(*) FROM query_storage WHERE timestamp < now-N*86400`;
+the DB file only shrinks with a VACUUM.

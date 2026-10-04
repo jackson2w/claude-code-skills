@@ -1,6 +1,6 @@
 ---
 name: hermes-agent-deployment
-description: This skill should be used when deploying or debugging a self-hosted Hermes Agent (Nous Research's self-hosted personal-assistant gateway bridging Telegram/WhatsApp/Slack/Discord to an LLM with tool/skill/cron access — Will calls his instance "Chuka") — including install via the `hermes` CLI, the `hermes-gateway.service` systemd unit, native `hermes cron` scheduled jobs, the `hermes skills` system (SKILL.md drop-in files distinct from Claude Code's own skills), Debian 13 install gotchas (python3.13-venv, broken IPv6/gai.conf), fleet-readonly SSH access design, or UID-scoped egress firewalling. For credential protection via Agent Vault specifically, see the separate `agent-vault-credential-broker` skill — this skill covers Hermes's own deployment, not the broker. Trigger phrases include "hermes agent", "hermes gateway", "hermes cli", "hermes cron create", "hermes skills list", "hermes-gateway.service", "hermes mcp install", "ensurepip is not available", "HERMES_HOME", "hermes gateway install --system", "chuka", "hermes_cli.main gateway run", "LunaRoute glm-5.3-flash", "hermes fleet access", "hermes-remote", "hermes_egress table", "hermes gateway setup selector drops to done", "hermes setup tools", "hermes homeassistant setup not prompting", "aiohttp trust_env proxy bypass", "hermes update reverted patch", "uv pip install no pip module hermes venv".
+description: This skill should be used when deploying or debugging a self-hosted Hermes Agent (Nous Research's self-hosted personal-assistant gateway bridging Telegram/WhatsApp/Slack/Discord to an LLM with tool/skill/cron access — Will calls his instance "Chuka") — including install via the `hermes` CLI, the `hermes-gateway.service` systemd unit, native `hermes cron` scheduled jobs, the `hermes skills` system (SKILL.md drop-in files distinct from Claude Code's own skills), Debian 13 install gotchas (python3.13-venv, broken IPv6/gai.conf), fleet-readonly SSH access design, or UID-scoped egress firewalling. For credential protection via Agent Vault specifically, see the separate `agent-vault-credential-broker` skill — this skill covers Hermes's own deployment, not the broker. Trigger phrases include "hermes agent", "hermes gateway", "hermes cli", "hermes cron create", "hermes skills list", "hermes-gateway.service", "hermes mcp install", "ensurepip is not available", "HERMES_HOME", "hermes gateway install --system", "chuka", "hermes_cli.main gateway run", "LunaRoute glm-5.3-flash", "hermes fleet access", "hermes-remote", "hermes_egress table", "hermes gateway setup selector drops to done", "hermes setup tools", "hermes homeassistant setup not prompting", "aiohttp trust_env proxy bypass", "hermes update reverted patch", "uv pip install no pip module hermes venv", "hermes memory provider", "hindsight plugin", "memory.provider hindsight", "lazy_deps exact pin", "Feature memory.hindsight unavailable", "local_external".
 ---
 
 # Hermes Agent deployment
@@ -642,3 +642,39 @@ Also set the same day: `updates.pre_update_backup: full` (was `false`, i.e. no b
 and `tool_loop_guardrails.hard_stop_enabled: true`. v0.20.6 has no interactive-vs-cron split for
 the hard stop; it applies to DM turns too, at upstream's default thresholds (5/8/5). The
 per-turn `loop_caps` (50 web searches, 50 subagents) are always on regardless.
+
+## External memory provider plugins (Hindsight pilot, 2026-10-03) — the traps
+
+Hermes 0.20.6 ships in-core memory plugins (`plugins/memory/<name>`). They are enabled with
+`memory.provider: <name>` (`hermes-config-install.yml`) and each reads `~/.hermes/<name>/config.json`.
+Built-in MEMORY.md/USER.md stays on alongside. Checking `hermes memory status` as `hermes`, with
+`HERMES_HOME`, shows `Provider`, `Plugin: installed`, `Status: available`.
+
+- **Exact client pin.** `tools/lazy_deps.py` pins each plugin's SDK exactly (for example
+  `"memory.hindsight": ("hindsight-client==0.6.1",)`). Any other installed version fails that
+  check, so Hermes tries to pip-install as `hermes` into the root-owned venv, fails, and **disables
+  the feature at runtime** (`retain failed: Feature 'memory.hindsight' unavailable`). Install
+  exactly the pinned version, and re-check the pin after every Hermes upgrade.
+- **The venv has no pip.** It was built by uv. `uv` exists only as hermes-owned binaries
+  (`~/.local/bin/uv`, `~/.hermes/bin/uv`), and **root must not execute a file the hermes user can
+  write**, because that's an escalation path. Bootstrap with the interpreter's stdlib:
+  `/usr/local/lib/hermes-agent/venv/bin/python -m ensurepip`. It installs **`pip3`**, not `pip`
+  (an Ansible `pip` task pointed at `bin/pip` fails rc=2 with no output).
+- **Default mode is cloud.** Hindsight's plugin defaults to `mode: cloud` (Vectorize's hosted API).
+  Its `is_available()` returns true in cloud mode once an API key **or** an `api_url` exists. Write
+  `config.json` (`local_external`, your URL) **before** setting `memory.provider`, and gate each
+  step on the previous one's exit code. A failed install hidden by `| grep` in an `&&` chain once
+  let the provider go live with no config. It stayed inert only because no key or URL existed yet.
+- **Status indicators:** `recall_indicator`/`retain_indicator` print a status line in Telegram on
+  every turn; set both false.
+- **Cron turns don't retain:** Chuka's 2-minute cron turns created nothing, so background jobs
+  don't flood the store.
+- **Test with an incidental detail, not an explicit fact.** "For the record: X" is written to
+  USER.md by the built-in memory tool, so it proves nothing about the provider. Check the
+  provider's own store directly (e.g. Hindsight bank `chuka` documents), and mention the test
+  detail in passing.
+- **Keys through Agent Vault:** a placeholder `HINDSIGHT_API_KEY` in `.env`, with the real key in
+  the `hermes` vault as service `hindsight`. The tailnet IP had to be added to netguard's
+  `AGENT_VAULT_NETWORK_ALLOWLIST`. The client is aiohttp with `trust_env=True` set by the library itself (unlike the
+  bare `aiohttp.ClientSession()` calls in the Home Assistant tool above), so it honors gateway.env's proxy. Its urllib `/version` probe does not (407): harmless, it only disables
+  `update_mode='append'`.

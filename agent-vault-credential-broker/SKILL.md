@@ -1,6 +1,6 @@
 ---
 name: agent-vault-credential-broker
-description: This skill should be used when deploying or debugging Infisical's Agent Vault (a self-hosted, research-preview credential broker that intercepts an agent's outbound HTTPS calls via a local MITM proxy and injects real API keys so the agent process never holds them) — including provisioning a new instance, wiring it in front of an existing agent (OpenClaw, Hermes, a coding agent), the `agent-vault` CLI (vault/service/agent/run subcommands), or debugging a broken cutover. Trigger phrases include "agent vault", "credential broker", "get.agent-vault.dev", "agent-vault run", "AGENT_VAULT_TOKEN", "AGENT_VAULT_ADDR", "AGENT_VAULT_VAULT", "mitm-ca.pem", "agent-vault server", "unmatched_host_policy", "openclaw-on-vps.mdx", "hermes-on-vps.mdx", "placeholder api key vault", "__anthropic_api_key__", "Failed to set up mount namespacing", "agent process never holds credential", "MITM proxy inject api key", "vault service add catalog", "netguard blocked by network policy", "AGENT_VAULT_NETWORK_ALLOWLIST", "AGENT_VAULT_ALLOW_PRIVATE_RANGES", "agent vault 502 internal host", "agent vault tailnet private ip blocked".
+description: This skill should be used when deploying or debugging Infisical's Agent Vault (a self-hosted, research-preview credential broker that intercepts an agent's outbound HTTPS calls via a local MITM proxy and injects real API keys so the agent process never holds them) — including provisioning a new instance, wiring it in front of an existing agent (OpenClaw, Hermes, a coding agent), the `agent-vault` CLI (vault/service/agent/run subcommands), or debugging a broken cutover. Trigger phrases include "agent vault", "credential broker", "get.agent-vault.dev", "agent-vault run", "AGENT_VAULT_TOKEN", "AGENT_VAULT_ADDR", "AGENT_VAULT_VAULT", "mitm-ca.pem", "agent-vault server", "unmatched_host_policy", "openclaw-on-vps.mdx", "hermes-on-vps.mdx", "placeholder api key vault", "__anthropic_api_key__", "Failed to set up mount namespacing", "agent process never holds credential", "MITM proxy inject api key", "vault service add catalog", "netguard blocked by network policy", "AGENT_VAULT_NETWORK_ALLOWLIST", "AGENT_VAULT_ALLOW_PRIVATE_RANGES", "agent vault 502 internal host", "agent vault tailnet private ip blocked", "credential set argv", "/v1/credentials", "copy credential between vaults", "Tunnel connection failed: 407", "urllib proxy auth", "one vault per consumer".
 ---
 
 # Agent Vault (Infisical) — credential broker for agent processes
@@ -413,3 +413,39 @@ that returns a real status code, it is settled without changing anything yet.
 
 **The general rule:** when one client through a proxy works and another does not, the proxy is
 not the variable. Reproduce with the **failing library**, never with `curl`.
+
+## Setting a credential without putting it in argv — use the API, in-process (2026-10-03)
+
+`agent-vault vault credential set` only takes `KEY=VALUE` as an argument (no `--stdin`, no file),
+so the value would sit in the process list. The CLI is a thin client for
+`POST {address}/v1/credentials` with `{"vault": "<name>", "credentials": {"KEY": "<value>"}}`
+and `Authorization: Bearer <token>`. Both `address` and `token` are in `/root/.agent-vault/session.json`.
+Do it in one Python process on the broker host, reading the value from stdin or from another
+vault's `GET /v1/credentials?vault=<v>&reveal=true&key=<K>`. Then read it back and compare by
+**hash only**; never print it. Used twice on 2026-10-03: copying `LUNAROUTE_API_KEY` vault-to-vault
+inside the broker, and piping `HINDSIGHT_API_KEY` from ansible-ctrl's `infisical-get.sh` over SSH stdin.
+
+## One vault per consumer, even when the credential is shared
+
+An identity with `<vault>:proxy` can use **every** service in that vault. Hindsight needed only
+LunaRoute, but Chuka's `hermes` vault also holds Telegram, Home Assistant, n8n and Groq. So it got
+its own vault, `hindsight`, holding just the `lunaroute` service with a copied key, and the
+identity `hindsight-server` has `hindsight:proxy` only. The key still lives only in the broker; the
+blast radius of a compromised consumer shrinks to that one service.
+
+## Python `urllib` gets 407 through the proxy even with the `token:@` form
+
+`urllib.request` does not send proxy credentials on an HTTPS `CONNECT` built from the env
+userinfo. It fails with `Tunnel connection failed: 407 Proxy Authentication Required`, even with
+the trailing-colon URL from the section above. `httpx`, `requests` (with the colon) and `aiohttp`
+with `trust_env=True` all work. Seen 2026-10-03: Hermes's Hindsight plugin probes `/version` with
+urllib, gets 407, and falls back to per-process document IDs, while its real calls (aiohttp) work.
+Check which HTTP library a client uses before assuming the proxy covers it.
+
+## Don't `head`/`cat` files in `~/.agent-vault/ca/`
+
+Only `ca.crt.pem` is public. `ca.key.enc` is the CA private key, encrypted under the master
+password. Listing the directory with `head -1` of each file printed its first line into a session
+transcript (2026-10-03; harmless while the master password stays private). To fetch the public
+cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible `slurp` with
+`delegate_to: agent-vault`.

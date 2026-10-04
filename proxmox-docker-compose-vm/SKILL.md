@@ -1,6 +1,6 @@
 ---
 name: proxmox-docker-compose-vm
-description: This skill should be used when deploying an application that only ships via Docker Compose (no native/bare-metal install path — e.g. Immich, and similar multi-container stacks with a custom database extension baked into a maintained image) inside a Proxmox VM, managing its Docker Compose file and secrets as code via Ansible, debugging a Compose service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale Serve, wiring up a hardware-acceleration `extends:` stanza (hwaccel.yml, OpenVINO/VAAPI image tags) that ships commented-out in the upstream Compose file, or exposing one feature of an otherwise tailnet-only app (e.g. Immich share links) to people outside the tailnet via a purpose-built proxy sidecar + narrow Funnel rather than punching a hole in the app's own API. Also covers verifying an async first-run job (ML indexing, search embedding, etc.) actually processed something rather than just checking container health, and a shared Ansible `file` loop silently drifting a sensitive directory's mode. Trigger phrases include "docker compose in a proxmox vm", "immich docker deployment", "no bare-metal install path", "docker compose ports binds 0.0.0.0", "docker-proxy 0.0.0.0", "ansible deploy docker-compose.yml", "verify smart search indexed", "async job queued but not verified", "second disk for docker volumes proxmox", "hwaccel.yml extends", "immich openvino image tag", "docker compose hardware acceleration", "share immich link outside tailnet", "immich public proxy", "expose one path publicly without exposing the app", "funnel to a proxy not the app".
+description: This skill should be used when deploying an application that only ships via Docker Compose (no native/bare-metal install path — e.g. Immich, and similar multi-container stacks with a custom database extension baked into a maintained image) inside a Proxmox VM, managing its Docker Compose file and secrets as code via Ansible, debugging a Compose service that's unexpectedly reachable on the plain LAN IP instead of only over Tailscale Serve, wiring up a hardware-acceleration `extends:` stanza (hwaccel.yml, OpenVINO/VAAPI image tags) that ships commented-out in the upstream Compose file, or exposing one feature of an otherwise tailnet-only app (e.g. Immich share links) to people outside the tailnet via a purpose-built proxy sidecar + narrow Funnel rather than punching a hole in the app's own API. Also covers verifying an async first-run job (ML indexing, search embedding, etc.) actually processed something rather than just checking container health, and a shared Ansible `file` loop silently drifting a sensitive directory's mode. Trigger phrases include "tailscale serve nftables allowlist not working", "restrict tailnet peers serve", "docker compose in a proxmox vm", "immich docker deployment", "no bare-metal install path", "docker compose ports binds 0.0.0.0", "docker-proxy 0.0.0.0", "ansible deploy docker-compose.yml", "verify smart search indexed", "async job queued but not verified", "second disk for docker volumes proxmox", "hwaccel.yml extends", "immich openvino image tag", "docker compose hardware acceleration", "share immich link outside tailnet", "immich public proxy", "expose one path publicly without exposing the app", "funnel to a proxy not the app".
 ---
 
 # Docker Compose stack in a Proxmox VM (not an LXC)
@@ -289,3 +289,16 @@ fine, not a sign of a broken backup).
    LAN host — expect refused/timeout, not a response. This is the only reliable proof Gotcha
    1 didn't slip through.
 6. A real manual `vzdump` completes and the backup log doesn't show an unexpected exclusion.
+
+## Gotcha 7 — in-guest nftables cannot restrict who reaches a Tailscale Serve port
+
+Serve accepts the connection inside `tailscaled` (netstack), ahead of the kernel's input hook, so
+an `iifname "tailscale0" tcp dport 443 ip saddr {...} accept; ... drop` allowlist filters nothing.
+Proven 2026-10-03 on `hindsight` (VM 113): the rule was loaded, yet a non-listed peer got HTTP 200,
+while the same table's `eth0` rules (SSH, 9100) worked. To limit tailnet reachability of a Serve
+service, use the **app's own auth** (Hindsight: `ApiKeyTenantExtension`, 401 without the key) or
+a **Tailscale ACL/grant**. ACLs only allow, so on an allow-all policy that means making the whole
+policy explicit, which is Will's call in the admin console. Always test a non-listed peer before
+claiming an inbound restriction. If you keep nftables for LAN-side rules, give it its **own table**
+and flush only that table. Debian's `/etc/nftables.conf` starts with `flush ruleset`, which would
+also wipe Docker's and Tailscale's rules.
