@@ -150,7 +150,8 @@ inspect` of the live hand-run container: three env vars, `127.0.0.1:8080->80`, a
   time with `/usr/local/bin/infisical-get.sh`. It was moved there by piping it from `docker inspect`
   to ansible-ctrl's `infisical-set.sh` (dfw has no write helper), never printed, and verified by
   sha256 against the live value. The old `--env-file /root/.config/vaultwarden-admin.env` in the
-  recipe above is no longer used.
+  recipe above is gone: it was shredded 2026-10-04 after a hash match against Infisical showed
+  nothing referenced it. Infisical is now the only copy.
 - **Checks after an update:** `docker exec vaultwarden /vaultwarden --version`, then
   `https://dfw.tail922cee.ts.net:8443/alive` -> 200. `/api/config`'s `version` field is the
   *Bitwarden API* compatibility version (`2026.6.0`), not Vaultwarden's.
