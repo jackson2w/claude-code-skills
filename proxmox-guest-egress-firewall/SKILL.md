@@ -94,9 +94,10 @@ timeout 5 bash -c '</dev/tcp/1.1.1.1/53'         && echo OPEN || echo BLOCKED   
 
 Inbound SSH from ansible-ctrl still works (inbound ACCEPT plus conntrack replies); test it too.
 
-## Not managed by IaC (as of 2026-10-03)
+## Not managed by IaC, and its current state
 
 These files live only in `/etc/pve` (covered by pve's config backup). A copy of the exact contents
-is in the planning repo's `hindsight-pilot-plan.md`. The homelab memory
-`reference_pve_firewall_enabled` records that the switch is now **on**, so a future `firewall=1`
-or a new `<vmid>.fw` takes effect immediately rather than being inert.
+is in the planning repo's `hindsight-pilot-plan.md`. **On `pve` the switch was turned back OFF 2026-10-05** when Hindsight (VM 113, its only filtered guest)
+was decommissioned: `cluster.fw` is `enable: 0`, `113.fw` is deleted, and the host and Pi-hole off files
+remain. Re-enabling means following the order above again. The homelab memory
+`reference_pve_firewall_enabled` tracks the current state.
