@@ -158,6 +158,10 @@ argv, add `ansible-ctrl`'s identity to the new project as Member and write via t
 (`POST /api/v3/secrets/raw/<name>`, JSON body built by `jq` into a 600 file, token in a `curl -H @file`
 header). `GET /api/v1/workspace` lists the projects an identity can see, IDs included. Done this way for
 hermes: project `hermes` = `7a848701-b64d-412b-b6b9-de7f530940a4`.
+Once a host's watchers run through the wrapper, every alert depends on Infisical being reachable:
+the wrapper exits non-zero (a failed unit, visible in the sweep) rather than running without
+credentials. dfw has accepted that since 2026-09. Prove a migration with the old file **gone** (rename
+to `.bak`), plus a negative control: the same script run without the wrapper must refuse.
 
 ## Verification discipline — do all of this, in order, for every credential
 
