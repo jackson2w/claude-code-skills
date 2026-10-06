@@ -302,3 +302,13 @@ policy explicit, which is Will's call in the admin console. Always test a non-li
 claiming an inbound restriction. If you keep nftables for LAN-side rules, give it its **own table**
 and flush only that table. Debian's `/etc/nftables.conf` starts with `flush ruleset`, which would
 also wipe Docker's and Tailscale's rules.
+
+## Gotcha 8 — a compose-file edit does not always restart anything; gate post-restart checks on it
+
+`docker compose up -d` recreates a container only when its effective config changes. A comment, or an
+edit to another service, leaves it running. A playbook that, on "compose file changed", then requires a
+startup log line (e.g. Infisical's "Migrations completed successfully") fails against a container that
+correctly did not restart. Found 2026-10-06 on the first exercise of `infisical-server.yml`. Record the
+container ID (`docker inspect -f '{{.Id}}'`) before `up -d`, compare after, and run the startup checks
+only if it changed. Order for an image bump: validate (`compose config -q`), `pull` while the old
+version still serves, back up, `up -d`, wait for health, then check startup logs since the restart time.

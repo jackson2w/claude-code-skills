@@ -277,3 +277,12 @@ curl -s -u "admin:$PW" -H 'Content-Type: application/json' -X POST "$B/$NAME/tes
 **built-in Alertmanager**, which then routes per `policies.yaml`. It does *not* mean local-only
 delivery. Read the notification policy's root receiver before concluding an alert never reaches the
 contact point.
+
+## The Grafana package resets `/etc/grafana` permissions on every upgrade
+
+`/var/lib/dpkg/info/grafana.postinst` runs `chown -Rh root:grafana /etc/grafana` and
+`find /etc/grafana -type f -exec chmod 640 {} ';'`. A playbook that writes provisioning files `0644`
+flip-flops with it: after each upgrade the weekly `ansible_check` shows drift, and a real run restarts
+grafana-server only to loosen permissions. Write them `owner: root, group: grafana, mode: '0640'`
+(`grafana-alerting.yml`, fixed 2026-10-06 after the 13.2.3 upgrade on 10-01). That is also right for
+`contactpoints.yaml`, which carries the bot token.

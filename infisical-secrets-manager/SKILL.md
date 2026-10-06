@@ -163,6 +163,18 @@ the wrapper exits non-zero (a failed unit, visible in the sweep) rather than run
 credentials. dfw has accepted that since 2026-09. Prove a migration with the old file **gone** (rename
 to `.bak`), plus a negative control: the same script run without the wrapper must refuse.
 
+## Upgrading the self-hosted server (2026-10-06)
+
+`homelab-ansible` `playbooks/infisical-server.yml` owns `/opt/infisical/docker-compose.prod.yml` and the
+unit (`.env` is asserted, never managed). **To upgrade:** read Infisical's upgrade-impact note for every
+release in between (`upgrade-impact/data/releases/<version>.yaml` in the GitHub repo; `gh api
+repos/Infisical/infisical/contents/upgrade-impact/data/releases` lists them), and prefer a release that
+already has one: the newest often doesn't on its release day. Bump the tag in
+`files/infisical-server/docker-compose.prod.yml` and run the playbook; it pulls, `pg_dump`s, restarts, waits
+for `/api/status` and checks the migration line. Schema migrations are one-way: rollback is the previous
+compose plus the dump. The whole fleet's fetches fail for the ~30 s restart, so stay clear of the
+02:30–03:30 CT backup hour. v0.162.20 → v0.165.16 on 2026-10-06 took 32 s with zero error logs.
+
 ## Verification discipline — do all of this, in order, for every credential
 
 1. Non-revealing length check: `infisical-get.sh NAME | wc -c` on the new host — confirms the
