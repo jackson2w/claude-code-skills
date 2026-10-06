@@ -148,6 +148,17 @@ identity — reusing `ansible-ctrl`'s identity file across hosts is not how Infi
    `curl -1sLf https://artifacts-cli.infisical.com/setup.deb.sh | bash && apt-get install -y infisical`.
 4. Deploy the two helper scripts (see above), pointed at the same project/domain constants.
 
+**Least privilege on the free plan = a separate project (2026-10-05, hermes).** Custom project roles
+(and so path conditions like `/hermes/**`) need Infisical Enterprise; the free plan offers only Admin,
+Member, Viewer, No Access, and each applies to a whole project. Anything given a role on `homelab-fleet`
+can read every fleet secret. For a host that must see only its own credentials (an agent host), create
+its own project, give its identity **Viewer** there and no `homelab-fleet` membership, and point its
+helper scripts' `INFISICAL_PROJECT_ID` at it (path `/`). To load values without them reaching chat or
+argv, add `ansible-ctrl`'s identity to the new project as Member and write via the API
+(`POST /api/v3/secrets/raw/<name>`, JSON body built by `jq` into a 600 file, token in a `curl -H @file`
+header). `GET /api/v1/workspace` lists the projects an identity can see, IDs included. Done this way for
+hermes: project `hermes` = `7a848701-b64d-412b-b6b9-de7f530940a4`.
+
 ## Verification discipline — do all of this, in order, for every credential
 
 1. Non-revealing length check: `infisical-get.sh NAME | wc -c` on the new host — confirms the
