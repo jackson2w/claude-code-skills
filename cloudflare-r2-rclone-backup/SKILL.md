@@ -325,3 +325,7 @@ skill, whose report emails this feeds) for a full working implementation, includ
   than assuming an existing working credential covers it — confirmed live: writes to `.chunks/`,
   `ct/`, `vm/` (original grant) succeeded while an identical write to a brand-new `.attic/` prefix
   403'd with the *same* credential, same bucket, same command.
+
+## Hold the distro rclone package once a pinned binary shares its path (2026-10-06)
+
+Installing a pinned rclone release straight to `/usr/bin/rclone` (per §0 above) does not protect it from a **later** `apt upgrade` -- if the Debian `rclone` package is or becomes installed, apt owns that same path, and a routine upgrade silently overwrites the pinned binary with the distro's (years-old) build, undoing the whole point of pinning. Run `apt-mark hold rclone` right after installing the pinned binary so apt refuses to touch it. Separately, make sure the read-only task that checks the installed rclone version for drift also runs under `ansible-playbook --check` (`check_mode: false` -- see the ansible-check-mode-verification-tasks pattern); otherwise the weekly `ansible_check` drift sweep is blind to a pin that got silently reverted between real runs. homelab-ansible `db505f1`, `954162e`.

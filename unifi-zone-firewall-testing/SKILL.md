@@ -407,3 +407,7 @@ not a field named `doh` on some object. A parser scanning key *names* for `doh` 
 reports "absent", which reads as reassuring and means nothing. `doh` on would bypass Pi-hole for
 gateway-originated queries, which a DNAT structurally cannot close, so a false "absent" here is
 expensive.
+
+## A one-device exception needs --src-ip, or it silently becomes zone-wide
+
+`unifi-fw add-allow` without `--src-ip` matches **every device in the source zone**, not just the one intended -- a rule meant to carve out a single IoT camera's talk-back path would instead quietly open that path for the entire IoT VLAN. Always pass `--src-ip <device-ip>` to scope an exception to specific sources, and verify by reading the created policy back (its source-IP field), not by trusting the create call's 200/`ok`. First real use: the Nanit talk-back exception, 2026-10-05 (homelab-ansible `39dce16`) -- `192.168.20.109` scoped to only the household phones/iPads on UDP high ports + TCP 4443.
