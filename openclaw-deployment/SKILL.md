@@ -1601,3 +1601,25 @@ bare restart after a manual `npm install -g` trips the gates without running the
 `update.auto.enabled: false`, `update.checkOnStart: false`, `OPENCLAW_NO_AUTO_UPDATE=1`; there is
 no `update.pin` and `--tag` is not persisted, so the declared version lives in
 `dfw-ansible`'s `openclaw-gateway-install.yml`, which fails on a mismatch by design.
+
+## Upgrade 2026.8.2 → 2026.9.6 on dfw (2026-10-07, D-28): what actually bit
+
+- **Node first.** 9.3+ needs Node ≥24.16 (<25) or ≥26.1. On dfw: switch `/etc/apt/sources.list.d/nodesource.sources`
+  from `node_22.x` to `node_24.x`, `apt-get install nodejs` (24.21.0). Only the gateway uses Node there. The running
+  gateway keeps the old binary until its restart. 8.2 also runs on Node 24, so an OpenClaw rollback survives.
+- **npm 11 (ships with Node 24) skips install scripts by default.** A plain `npm install -g openclaw@X` "succeeds"
+  without OpenClaw's bundled-plugins postinstall. Use
+  `npm install -g --allow-scripts=@google/genai,koffi,protobufjs,openclaw openclaw@X`, including for a rollback.
+- **`sudo -u openclaw … openclaw doctor` from claude-admin's home fails with `spawn /usr/bin/node EACCES`:**
+  the child inherits a cwd openclaw can't enter. Run it as `cd / && sudo -u openclaw -H …`.
+- **Preview before `doctor --fix`.** The 9.6 preview wanted to archive TOOLS.md and merge it into AGENTS.md
+  (TOOLS.md is Will's call, never Claude Code's) and to move HEARTBEAT.md into the heartbeat job's scratch
+  (intersects Olu's Lane B row). Neither was run; both went to Will/Olu. The gateway's own startup runs the
+  safe migrations (transcript media, config-audit log → SQLite, Skill Workshop relocation) without them.
+- **Capability consent:** non-bundled plugins (admin-changes-gate, no-reply-guard) needed
+  `openclaw plugins enable <id> --accept-capabilities` before restart, or they may not load. admin-changes-gate
+  is Olu's outbound approval gate, so check it is in the "http server listening (N plugins: …)" line.
+- **Version-pinned plugins self-disable:** heartbeat-silent-strip and d24-runaway-loop-guard log "version pin
+  mismatch … hook DISABLED (no-op)" until Olu re-validates and bumps the pin. Plan that into the window.
+- **Plugin API floors:** brave 2026.7.1 couldn't be updated because its next release needs plugin API ≥2026.9.7.
+- Write `/root/state/openclaw-planned-restart` (epoch) before stopping, so the hermes peer watch treats it as planned.
