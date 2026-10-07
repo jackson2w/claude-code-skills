@@ -1623,3 +1623,19 @@ no `update.pin` and `--tag` is not persisted, so the declared version lives in
   mismatch … hook DISABLED (no-op)" until Olu re-validates and bumps the pin. Plan that into the window.
 - **Plugin API floors:** brave 2026.7.1 couldn't be updated because its next release needs plugin API ≥2026.9.7.
 - Write `/root/state/openclaw-planned-restart` (epoch) before stopping, so the hermes peer watch treats it as planned.
+- **Re-pin version-pinned plugins BEFORE the first restart on the new version.** On D-28 they were re-pinned after
+  it, so the first boot ran with heartbeat-silent-strip as a no-op for ~70 min, and two raw heartbeat outputs
+  reached Will's DM (msgs 3428, 3429). It took a third restart to arm them.
+- **Stuck heartbeat after a restart that interrupts a heartbeat run:** the restart-recovery of the interrupted
+  heartbeat session collided with the next cron run, which then sat with `state.runningAtMs` set for over an hour,
+  and `cron status` showed `nextWakeAtMs` pinned to it. On 9.6 the heartbeat is a **system-owned monitor job**:
+  `cron disable/enable/edit` refuse ("system-owned monitor jobs cannot be edited by cron clients"), and there is no
+  cancel. A gateway restart clears it (the run is recorded as "interrupted by gateway restart"). Afterwards, check
+  that `runningAtMs` goes null between ticks.
+- **How lane starvation looks on 9.6:** no 600 s job kill. Instead the heartbeat logs `skipped: requests-in-flight`
+  while other turns hold the lane, or runs into `agents.defaults.heartbeat.timeoutSeconds` (1800 s on dfw). Long
+  subagents (chat-run timeout ~30–47 min) holding both `maxConcurrent=2` slots also make the 120 s canary time out at
+  "last phase: model-call-started", even while model calls themselves return 200 in 1–3 s.
+- **Reading runs:** `cd / && sudo -u openclaw -H openclaw cron runs --id <job> --limit N --json | jq '[.. | objects |
+  select(has("runAtIso"))] | sort_by(.runAtIso)'` (the list comes oldest-last). Don't grep the journal for "timed
+  out": the agent's own report frames quote old errors into it.
