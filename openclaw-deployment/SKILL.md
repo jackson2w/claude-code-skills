@@ -1636,6 +1636,13 @@ no `update.pin` and `--tag` is not persisted, so the declared version lives in
   while other turns hold the lane, or runs into `agents.defaults.heartbeat.timeoutSeconds` (1800 s on dfw). Long
   subagents (chat-run timeout ~30–47 min) holding both `maxConcurrent=2` slots also make the 120 s canary time out at
   "last phase: model-call-started", even while model calls themselves return 200 in 1–3 s.
+- **Paging run history (2026.9.6):**
+  - `--id` needs the full job UUID; a short prefix returns "Automation not found". Get it from `cron list --json`.
+  - `--limit` caps at 200 ("must be <= 200"), so page with `--offset 0/200/400…`.
+  - Add `--status all` to include skips and errors.
+  - Records live under `.entries[]`, with `status` ok/skipped/error, `completionStatus`, `durationMs` and `runAtIso`.
+  - A-12 was judged this way on 2026-10-09: 293 runs, no 600 s kill, 2 × 1800 s timeouts and 16 skips. That is
+    lane starvation in its 9.6 form, which is a capacity problem, not the old kill.
 - **Reading runs:** `cd / && sudo -u openclaw -H openclaw cron runs --id <job> --limit N --json | jq '[.. | objects |
   select(has("runAtIso"))] | sort_by(.runAtIso)'` (the list comes oldest-last). Don't grep the journal for "timed
   out": the agent's own report frames quote old errors into it.

@@ -411,3 +411,28 @@ expensive.
 ## A one-device exception needs --src-ip, or it silently becomes zone-wide
 
 `unifi-fw add-allow` without `--src-ip` matches **every device in the source zone**, not just the one intended -- a rule meant to carve out a single IoT camera's talk-back path would instead quietly open that path for the entire IoT VLAN. Always pass `--src-ip <device-ip>` to scope an exception to specific sources, and verify by reading the created policy back (its source-IP field), not by trusting the create call's 200/`ok`. First real use: the Nanit talk-back exception, 2026-10-05 (homelab-ansible `39dce16`) -- `192.168.20.109` scoped to only the household phones/iPads on UDP high ports + TCP 4443.
+
+## Live WAN failover drill, and AP radio changes (2026-10-09)
+
+**Failover drill:** demote the primary WAN below the cellular WAN with `PUT rest/networkconf/<id>`
+(`wan_failover_priority`). Arm the restore first, on a LAN host, with `systemd-run --on-active=600`: the LAN path to
+the gateway survives the WAN change, while a remote session may not. API constraints:
+- Priorities must be unique, or you get `WanFailOverPriorityAlreadyExists`.
+- Valid priorities are only 1–9; 10 and above return `InvalidPayload`.
+- So reorder through a parking number: primary to 9, then cellular to 1. The restore parks every WAN on 7/8/9 and then
+  writes the snapshot values back.
+- Setting the primary to `failover-only` is refused (`MissingWeightedWanNetwork`); the priority swap alone is enough.
+
+Observe four things during the drill:
+- the gateway's `stat/device` `uplink.name` (`gre1` = the U5G tunnel);
+- egress IP from a LAN host;
+- `dig @<gateway> <blocked domain>`, which must still return 0.0.0.0 (DNS stays on Pi-hole over the cellular path);
+- throughput.
+
+Finish by diffing the WAN `networkconf` objects against the snapshot. An uplink-change alert
+(`wan-failover-watch.sh`) is the natural companion: nothing in UniFi itself notified anyone.
+
+**AP radio change (e.g. 5 GHz to 160 MHz):** `GET rest/device` returned no data on Network 9.x, so snapshot from
+`stat/device`, then `PUT rest/device/<id>` with the full `radio_table` modified. A DFS-spanning width forces a 60 s
+channel-availability check, during which every 5 GHz client drops. 802.11n devices (HomePods) may settle on 2.4 GHz
+afterwards.
