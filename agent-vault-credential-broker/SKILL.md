@@ -449,3 +449,32 @@ password. Listing the directory with `head -1` of each file printed its first li
 transcript (2026-10-03; harmless while the master password stays private). To fetch the public
 cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible `slurp` with
 `delegate_to: agent-vault`.
+
+## Upgrading, telemetry, and the two products named "Agent Vault" (2026-10-11)
+
+- **In-place upgrade, 0.39.1 → 0.40.0, verified.** Back up `/usr/local/bin/agent-vault`, download
+  `agent-vault_<v>_linux_amd64.tar.gz` and `checksums.txt` from the GitHub release, then run
+  `sha256sum --ignore-missing -c`. Verify the signature with cosign wherever cosign is available,
+  using the command in the release notes (`--bundle checksums.txt.sig`). Then `install -m 755`
+  and `systemctl restart agent-vault`. The vaults, services and credentials in the database all
+  survive. **Send Olu and Chuka an fyi before the restart**: Chuka's Telegram long-poll drops
+  once and reconnects within 5 s.
+- **Telemetry is on by default** (`--telemetry` defaults to true; it sends anonymous usage data to
+  PostHog). Turn it off by adding `AGENT_VAULT_TELEMETRY=false` to the unit's EnvironmentFile.
+  Verify it from `/proc/<pid>/environ`, not from the file.
+- **Two different products share the name.** Infisical's docs at
+  `infisical.com/docs/documentation/platform/agent-vault/*` describe a *platform-integrated*
+  Agent Vault: access bundles and sessions in the Infisical UI, a proxy enrolled with
+  `infisical agent-vault proxy --enrollment-token`, listening on port **17323**, and agents
+  launched with `infisical agent-vault run --session-token`. It is a separate product from the
+  standalone `agent-vault` server (`docs.agent-vault.dev`, ports 14321/14322). Its sessions expire
+  and can be revoked, which the standalone server's agent tokens can't. As of 10-11 Infisical
+  labels it a preview and "not recommended for production". Don't follow its quickstart against
+  the standalone server.
+- **Coverage audit.** Traffic to a host that no service in the vault covers passes through
+  untouched under the default policy. So "the agent's traffic goes through the proxy" does not
+  mean "its keys are brokered". Compare `agent-vault vault service list --vault <v>` against the
+  hosts the agent actually calls. A MITM log line for a host with no matching service means the
+  agent still holds that key itself.
+- `agent-vault vault list` prints a box-drawn table with ANSI codes. Don't parse it with awk;
+  name the vaults explicitly.
