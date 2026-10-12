@@ -478,3 +478,29 @@ cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible 
   agent still holds that key itself.
 - `agent-vault vault list` prints a box-drawn table with ANSI codes. Don't parse it with awk;
   name the vaults explicitly.
+
+## Moving an agent's remaining keys into the vault (OpenClaw on dfw, 2026-10-12)
+
+Moved 7 keys in about 5 minutes with 3 restarts. Everything below was verified live.
+- **Two credentials on one host** (Cloudflare's API token and email token both go to
+  `api.cloudflare.com`): an auth type can inject only one header value per host. Use
+  `auth: passthrough` plus two `substitutions` with `in: [header]`, each with its own placeholder
+  (`__cloudflare_api_token__`, `__cloudflare_email_token__`). The agent sends
+  `Authorization: Bearer <placeholder>`, and the broker swaps in whichever value matches.
+- **git over HTTPS** sends `Authorization: Basic base64(user:token)`, which substitution can't
+  match. Add a separate `github.com` service with `type: basic`, with `username` pointing at a
+  credential holding the literal `x-access-token` and `password` at the token. Private
+  `git ls-remote` then works with no credential helper. `api.github.com` is a separate `bearer` service.
+- **Test each service before the swap**, as root on the agent host, using the gateway's own
+  wrapper: `set -a; . <agentvault.env>; agent-vault run --vault <v> -- curl -H "<header with
+  placeholder>" <url>` should return 200. The same curl with `env -u HTTPS_PROXY` must fail
+  (401/404/422). That failure is the control proving the 200 came from the vault.
+- **Before swapping a path-substituted key** (Telegram), check that the process has no direct
+  sockets to the provider's IP ranges (`ss -tnp | grep 149.154.`). A client that bypasses the proxy
+  sends the placeholder straight upstream and goes offline. Success signal: OpenClaw logs
+  `starting provider (@<botname>)`, which only happens after getMe resolves.
+- Bearer/api-key services take over live traffic **as soon as they're added**, before any swap.
+  So copy the value first and compare hashes, then add the service. Add the primary model
+  provider's service last, right before its own swap.
+- Restart order: the low-risk keys together, then chat, then the model provider. Write the planned-restart marker
+  (`/root/state/openclaw-planned-restart`) before each hand-run restart.
