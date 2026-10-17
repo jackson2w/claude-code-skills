@@ -445,3 +445,4 @@ afterwards.
 - **Not doable via API:** the built-in `Internet 2` WAN has `attr_no_delete` and no `enabled` field; per-network mDNS scoping is silently dropped.
 - `stat/health` `vpn.remote_user_enabled` can still read true right after the One-Click VPN is disabled; trust the networkconf read-back and recheck later.
 - Auto-created objects to audit on a new console: a `UniFi Identity` WPA-Enterprise SSID broadcasting on both bands, and a `One-Click VPN` remote-user WireGuard server, both enabled with 0 users.
+- **`rest/user?mac=<mac>` ignores the filter** and returns every known client; taking `data[0]` renames whoever is first (it renamed the Mac mini on 10-17, reverted within a minute). Fetch `rest/user`, select by exact `mac` locally, assert exactly one match, then `PUT rest/user/<_id> {"name": ...}` and read back by MAC.

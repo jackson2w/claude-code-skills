@@ -277,3 +277,7 @@ To verify WordPress's own update-failure email notifications will actually work 
 the configured mail transport (SMTP plugin, Postmark, etc.) accepted the message; for
 stronger proof of actual delivery, check the transport's own delivery log (e.g. Postmark's
 Messages API) rather than trusting the boolean alone.
+
+## After a backup-plugin restore, sweep the webroot for the restore's own files (2026-10-17)
+
+BackWPup (and similar) restores drop the archive's DB dump (`<prefix>_<site>.sql`), `manifest.json`, `backwpup_readme.txt` and a plugin-list txt into the **webroot**, and a stock WordPress nginx config serves them with 200. One sat public for two months. After any migration/restore: `find <webroot> -maxdepth 2 \( -iname '*.sql*' -o -name manifest.json -o -iname '*backup*' -o -iname '*.zip' -o -iname '*.tar*' \)`, move hits out, and `curl -sI` each URL to confirm 404. Defence in depth: an nginx `location ~* \.(sql|sql\.gz|bak|zip|tar|tar\.gz|log)$ { deny all; }` and a Cloudflare WAF rule on the same extensions. To judge exposure without reading values, compare sha256 fingerprints of each secret-looking option in the dump against the live `wp_options` row.
