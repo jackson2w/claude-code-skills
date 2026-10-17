@@ -436,3 +436,12 @@ Finish by diffing the WAN `networkconf` objects against the snapshot. An uplink-
 `stat/device`, then `PUT rest/device/<id>` with the full `radio_table` modified. A DFS-spanning width forces a 60 s
 channel-availability check, during which every 5 GHz client drops. 802.11n devices (HomePods) may settle on 2.4 GHz
 afterwards.
+
+## Reading and writing site settings via the API (2026-10-17)
+
+- **Filter by key name, not value length.** `rest/setting` (`mgmt`, `radius`, `magic_site_to_site_vpn`, `connectivity`, `element_adopt`), `rest/wlanconf` and `rest/networkconf` carry short plaintext secrets: device SSH password, API token, RADIUS secret, WireGuard private key, mesh/WLAN PSKs. Drop keys matching `^x_|psk|secret|passw|key|token|private` before printing anything.
+- **Writes that persisted with a partial PUT (`X-API-KEY`, UniFi Network 10.6):** `rest/wlanconf/<id>` `{"enabled":false}` and `{"minrate_ng_enabled":true,"minrate_ng_data_rate_kbps":6000}`; `rest/networkconf/<one-click-vpn id>` `{"enabled":false}`; `rest/setting/teleport/<id>` `{"key":"teleport","enabled":false}`; `rest/setting/super_mgmt/<id>` `{"key":"super_mgmt","autobackup_cron_expr":"30 0 * * 0", ...}`. Re-read each: `rc: ok` is not evidence (mDNS writes return ok and are discarded).
+- **Raising the 2.4 GHz minimum rate applied without disconnecting clients** and cut the AP's own airtime (`radio_table_stats.cu_self_tx`) from 15% to 4%: beacons go at the minimum rate, so many SSIDs × 1 Mbps beacons is the classic hidden 2.4 GHz cost. Check every client's `tx_rate` is well above the new floor first.
+- **Not doable via API:** the built-in `Internet 2` WAN has `attr_no_delete` and no `enabled` field; per-network mDNS scoping is silently dropped.
+- `stat/health` `vpn.remote_user_enabled` can still read true right after the One-Click VPN is disabled; trust the networkconf read-back and recheck later.
+- Auto-created objects to audit on a new console: a `UniFi Identity` WPA-Enterprise SSID broadcasting on both bands, and a `One-Click VPN` remote-user WireGuard server, both enabled with 0 users.

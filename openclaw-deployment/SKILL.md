@@ -1646,3 +1646,16 @@ no `update.pin` and `--tag` is not persisted, so the declared version lives in
 - **Reading runs:** `cd / && sudo -u openclaw -H openclaw cron runs --id <job> --limit N --json | jq '[.. | objects |
   select(has("runAtIso"))] | sort_by(.runAtIso)'` (the list comes oldest-last). Don't grep the journal for "timed
   out": the agent's own report frames quote old errors into it.
+
+## Stopping or retiring an OpenClaw agent: disable the restarters first (2026-10-17)
+
+A fleet that babysits OpenClaw will fight a plain `systemctl disable --now openclaw`. Order that worked on dfw:
+
+1. Write the planned-restart marker (epoch into `/root/state/openclaw-planned-restart`) so peer/health watchers stand down.
+2. `disable --now` every timer that **restarts** it (corruption watchdog, conditional memory restart) — a watchdog's `systemctl restart` starts a disabled unit.
+3. `disable --now` every timer that **alerts** on it (health check, provider-error watch, model-drift check), and the **peer** host's watch if its only subject is this agent. Keep watchers whose subject is the *other* agent.
+4. Stop `openclaw` + `openclaw-admin-server`. SIGTERM exits 143, so the unit lands `failed`: `systemctl reset-failed openclaw` or the fleet failed-unit check pages.
+5. Off-host: pause dispatch/brief scripts and remove any sweep check that expects the dashboard Serve to answer; dry-run both.
+6. Record that these are hand changes: the Ansible role re-enables them until the role is removed.
+
+Leftover `systemd --user`/`dbus-daemon` processes for the service user are the lingering user session, not the agent. Durable removal (vault/keys, egress rules, exchange, fleet access, data archive) is a separate step.
