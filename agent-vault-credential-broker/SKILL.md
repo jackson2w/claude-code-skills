@@ -452,6 +452,8 @@ cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible 
 
 ## Upgrading, telemetry, and the two products named "Agent Vault" (2026-10-11)
 
+**If the host is Ansible-managed, backport the version pin in the same session.** `homelab-ansible`'s `agent-vault-install.yml` pins the binary by version and sha256 (tarball + extracted binary). A hand upgrade changes only the live host; the next real playbook run reinstalls the old pin. Happened 10-11 → caught 10-17 (fixed in `9004af5`): take the tarball sha from the release `checksums.txt`, confirm the extracted binary sha equals the live `/usr/local/bin/agent-vault`, bump all three vars, `--check` must be changed=0.
+
 - **In-place upgrade, 0.39.1 → 0.40.0, verified.** Back up `/usr/local/bin/agent-vault`, download
   `agent-vault_<v>_linux_amd64.tar.gz` and `checksums.txt` from the GitHub release, then run
   `sha256sum --ignore-missing -c`. Verify the signature with cosign wherever cosign is available,
