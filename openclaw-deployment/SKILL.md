@@ -1654,6 +1654,7 @@ A fleet that babysits OpenClaw will fight a plain `systemctl disable --now openc
 1. Write the planned-restart marker (epoch into `/root/state/openclaw-planned-restart`) so peer/health watchers stand down.
 2. `disable --now` every timer that **restarts** it (corruption watchdog, conditional memory restart) — a watchdog's `systemctl restart` starts a disabled unit.
 3. `disable --now` every timer that **alerts** on it (health check, provider-error watch, model-drift check), and the **peer** host's watch if its only subject is this agent. Keep watchers whose subject is the *other* agent.
+   Include the **delivery canary verifier** (`dfw-canary-verify.timer`): it reads only `journalctl -u openclaw`, so a stopped agent looks like "cannot see the journal" and it pages every 30 min (missed 10-17, 136 alerts by 10-20). Inventory by grepping for the unit, not by timer name: `grep -lE 'openclaw\.service|-u openclaw' /usr/local/bin/* /usr/local/sbin/*`, then check which of those have a live timer.
 4. Stop `openclaw` + `openclaw-admin-server`. SIGTERM exits 143, so the unit lands `failed`: `systemctl reset-failed openclaw` or the fleet failed-unit check pages.
 5. Off-host: pause dispatch/brief scripts and remove any sweep check that expects the dashboard Serve to answer; dry-run both.
 6. Record that these are hand changes: the Ansible role re-enables them until the role is removed.
