@@ -135,6 +135,11 @@ agent's own dispatch path works, and fields the agent composes. Don't switch bli
 with a visible prefix (`[script]`) for a week, count false warnings and failed fires, then keep one.
 Either way the verifier stays out of process.
 
+**Final pick, 2026-10-20 (Will): script-only.** The trial started 2026-09-12 for a week, but neither canary
+was turned off: both ran in parallel for over a month, until a question prompt forced the choice. Put the
+end of a side-by-side trial on a dated follow-up, and verify the losing sender is actually disabled (here,
+the agent-run `delivery-canary` on hermes, recheck 2026-10-25), not just decided against.
+
 ## Mutual liveness: the only layer that survives its subject being dead
 
 Every other check runs *on* the host it monitors. A wedged, crash-looping, or offline host emits
