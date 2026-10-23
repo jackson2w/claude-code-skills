@@ -1,481 +1,311 @@
 #!/usr/bin/env python3
 """
-Golden Ratio Typography (GRT) Calculator
-Generates CSS custom properties and type styles based on GRT principles.
+Golden Ratio Typography (GRT) token generator, calibrated to grtcalculator.com.
 
-Usage:
-  python grt.py --font-size 16 --content-width 680
-  python grt.py --font-size 18 --content-width 800 --format scss
-  python grt.py --font-size 16 --content-width 680 --scan ./src
-  python grt.py --font-size 16 --content-width 680 --inject index.html
+v2 (2026-10-23). v1 approximated line heights with an invented blend and ran 4-8% tight on
+headings; v2 uses the published equation (grtcalculator.com/math/) and is checked against the
+calculator's own output with --self-test.
 
-References:
-  https://grtcalculator.com/math/
-  https://pearsonified.com/golden-ratio-typography/
+  Typographic scale     f·φ², f·φ^1.5, f·φ, f·√φ, f, f/√φ   (the calculator's six sizes)
+  Line height           h = f · [ (3 − φ) + (2φ − 3) · w / (34 f) + c ]
+  x-height correction   c = (x − (φ − 1)) / φ,  x = x-height ÷ CAP height (not ÷ em!)
+  Spacing               h·φ, h, h/φ, h/φ², h/φ³, h/φ⁴, each rounded from the previous step
+
+Usage
+  grt.py --font-size 18 --content-width 680 --font-file src/fonts/Body.ttf --output src/css/grt.css
+  grt.py -f 18 -w 680 --x-ratio 0.72               # x-height ÷ cap height, if you know it
+  grt.py --measure src/fonts/Body.ttf               # print a font's x-height ÷ cap height
+  grt.py --self-test                                # compare against stored calculator results
+
+Without --font-file or --x-ratio no x-height correction is applied (c = 0), which is the
+calculator's answer for a font whose x-height is exactly a golden section of its cap height.
+
+Output is rem (16px root) so readers' browser font settings are respected. It contains:
+  static tokens   --grt-scale-1..6 / --grt-lh-1..6 (body = 1), --grt-h1..h6-size/-lh,
+                  --grt-space-3xs..xxl, --grt-content-width, plus unitless --grt-lh-ratio-*
+  fluid tokens    --grt-step--1..5 and --grt-step-lh--1..5: Utopia-style clamp() that reaches
+                  the GRT values at --max-viewport and scales down to --min-font-size at
+                  --min-viewport (steps 1-4 land exactly on h4, h3, h2, h1)
 """
 
 import argparse
 import math
-import os
-import re
+import struct
 import sys
 from pathlib import Path
 
-PHI = (1 + math.sqrt(5)) / 2  # ≈ 1.618033988749895
-PHI_SQRT = math.sqrt(PHI)      # ≈ 1.272019649514069
+PHI = (1 + math.sqrt(5)) / 2
+SQRT_PHI = math.sqrt(PHI)
+WIDTH_FACTOR = 34  # GRT's constant width factor (grtcalculator.com/math/)
+ROOT_PX = 16
 
 
-def round_half(n):
-    """Round to nearest 0.5 for precise CSS values."""
-    return round(n * 2) / 2
+def rnd(n: float) -> int:
+    """Round half up, like the calculator (PHP round), not Python's banker's rounding."""
+    return int(math.floor(n + 0.5))
 
 
-def calculate_grt(font_size: float, content_width: float, x_height_ratio: float = None):
-    """
-    Calculate the full Golden Ratio Typography system.
+# ── Font metrics ────────────────────────────────────────────────────────────────
 
-    The GRT system produces:
-    - A 6-level typographic scale (font sizes)
-    - Corresponding line heights for each scale level
-    - Spacing units derived from the primary line height
-    - Ideal content width (if not provided)
+def measure_x_ratio(path: str) -> float:
+    """x-height ÷ cap height from a TTF/OTF's OS/2 table (version 2+). No dependencies."""
+    data = Path(path).read_bytes()
+    if data[:4] == b"wOF2":
+        sys.exit(f"{path} is WOFF2 (compressed). Point --font-file at the .ttf/.otf instead, "
+                 "or pass --x-ratio.")
+    if data[:4] == b"wOFF":
+        sys.exit(f"{path} is WOFF. Point --font-file at the .ttf/.otf instead, or pass --x-ratio.")
+    num_tables = struct.unpack(">H", data[4:6])[0]
+    tables = {}
+    for i in range(num_tables):
+        tag, _cs, off, ln = struct.unpack(">4sIII", data[12 + 16 * i: 28 + 16 * i])
+        tables[tag] = (off, ln)
+    if b"OS/2" not in tables:
+        sys.exit(f"{path} has no OS/2 table. Pass --x-ratio instead.")
+    off = tables[b"OS/2"][0]
+    version = struct.unpack(">H", data[off:off + 2])[0]
+    if version < 2:
+        sys.exit(f"{path} has OS/2 version {version}, which carries no x-height. Pass --x-ratio.")
+    x_height, cap_height = struct.unpack(">hh", data[off + 86: off + 90])
+    if x_height <= 0 or cap_height <= 0:
+        sys.exit(f"{path} reports x-height {x_height} / cap height {cap_height}. Pass --x-ratio.")
+    return x_height / cap_height
 
-    Formulas (from grtcalculator.com/math/):
-      φ = 1.618033988749895
-      Typographic scale: f, f×φ, f×φ², f×φ³, f×φ⁴, f×φ⁵
-      Base line height: h = f × φ
-      Line height (width-adjusted): uses content width to fine-tune
-      X-height correction: adjusts line height based on font metrics
-      Spacing units: primary line height scaled by φ and 1/φ
-    """
 
-    # ── Typographic scale (6 levels) ──────────────────────────────────────────
-    # Level 1 = body/base, levels 2–6 grow by φ each step
-    scale = [font_size * (PHI ** i) for i in range(6)]
+# ── GRT math ────────────────────────────────────────────────────────────────────
 
-    # ── Line heights ──────────────────────────────────────────────────────────
-    # Base formula: line_height = font_size × φ
-    # Width-tuning: the GRT calculator uses a "constant width factor" (W=34)
-    # to adjust line height based on content_width.
-    # Adjusted ratio: q = (1/φ) × (φ + content_width/(W × font_size²))
-    # This increases line height when lines are wider.
-    W = 34  # GRT width constant
+def correction(x_ratio):
+    return 0.0 if x_ratio is None else (x_ratio - (PHI - 1)) / PHI
 
-    def calc_line_height(fs, width=content_width):
-        base_h = fs * PHI
-        # Width adjustment term
-        width_adj = width / (W * fs)
-        # Blended line height ratio (harmonic between φ and width-adjusted value)
-        q = (1 / PHI) * (PHI + width_adj)
-        adjusted_h = fs * q
-        # Blend: weight base formula heavily, let width nudge it
-        h = (base_h + adjusted_h) / 2
-        # X-height correction: if ratio provided, adjust
-        if x_height_ratio:
-            ideal_x = 1 / PHI  # ≈ 0.618
-            correction = fs * (x_height_ratio - ideal_x)
-            h += correction * 0.5
-        return max(round(h), round(fs * 1.2))  # Never less than 1.2× font size
 
-    line_heights = [calc_line_height(s) for s in scale]
+def line_height(size: float, width: float, x_ratio=None) -> float:
+    """Unrounded GRT line height in px."""
+    q = (3 - PHI) + (2 * PHI - 3) * width / (size * WIDTH_FACTOR) + correction(x_ratio)
+    return size * q
 
-    # ── Spacing units ─────────────────────────────────────────────────────────
-    # Derived from the primary (body) line height:
-    # xs = lh/φ², sm = lh/φ, md = lh, lg = lh×φ, xl = lh×φ², xxl = lh×φ³
-    primary_lh = line_heights[0]
+
+def calculate(font_size: float, content_width: float, x_ratio=None) -> dict:
+    f, w = font_size, content_width
+    # The calculator's six sizes, largest first; index 4 is the body.
+    calc_sizes = [f * PHI ** 2, f * PHI ** 1.5, f * PHI, f * SQRT_PHI, f, f / SQRT_PHI]
+    body_lh = rnd(line_height(f, w, x_ratio))
+
+    # Spacing: chained rounding from the rounded body line height, as the calculator does.
+    down = [body_lh]
+    for _ in range(4):
+        down.append(rnd(down[-1] / PHI))          # h/φ, h/φ², h/φ³, h/φ⁴
+    up = [rnd(body_lh * PHI)]
+    for _ in range(2):
+        up.append(rnd(up[-1] * PHI))              # hφ, hφ², hφ³
     spacing = {
-        'xs':  round(primary_lh / PHI**2),
-        'sm':  round(primary_lh / PHI),
-        'md':  round(primary_lh),
-        'lg':  round(primary_lh * PHI),
-        'xl':  round(primary_lh * PHI**2),
-        'xxl': round(primary_lh * PHI**3),
+        "3xs": down[4], "2xs": down[3], "xs": down[2], "sm": down[1], "md": body_lh,
+        "lg": up[0], "xl": up[1], "xxl": up[2],
     }
 
-    # ── Ideal content width ───────────────────────────────────────────────────
-    # GRT principle: for a given font size and line height,
-    # the ideal line holds ~66 characters (the "golden" CPL).
-    # Approximated as: ideal_width ≈ font_size × 2.5 × PHI × 5
-    ideal_width = round(font_size * PHI**2 * 10)
+    # Display scale kept from v1's token names: scale-n = f·φ^(n−1), scale-1 = body.
+    scale = [f * PHI ** i for i in range(6)]
+    headings = {"h1": f * PHI ** 2, "h2": f * PHI ** 1.5, "h3": f * PHI,
+                "h4": f * SQRT_PHI, "h5": f * PHI ** 0.25, "h6": f}
 
-    # ── Heading mapping (practical web scale) ────────────────────────────────
-    # GRT's full 6-level scale grows very fast. For practical web headings
-    # we use half-phi steps (√φ ≈ 1.272) to keep h1 at ~2.6× the base:
-    #   h1 = base × φ²        ≈ 2.618× (e.g. ~42px for 16px base)
-    #   h2 = base × φ^1.5     ≈ 2.058× (e.g. ~33px)
-    #   h3 = base × φ         ≈ 1.618× (e.g. ~26px)
-    #   h4 = base × √φ        ≈ 1.272× (e.g. ~20px)
-    #   h5 = base × φ^0.25    ≈ 1.128× (e.g. ~18px)
-    #   h6 = base             = 1.0× (same as body)
-    # The full mathematical scale (scale-1 … scale-6) is still exported as
-    # CSS variables for display/hero text or design systems that need it.
-    h_sizes = {
-        'h1': font_size * PHI**2,                  # scale step 3
-        'h2': font_size * PHI**1.5,                # half-step between 2 & 3
-        'h3': font_size * PHI,                     # scale step 2
-        'h4': font_size * PHI_SQRT,                # half-step between 1 & 2
-        'h5': font_size * PHI**0.25,               # quarter-step
-        'h6': font_size,                           # body size
-    }
-    h_line_heights = {tag: calc_line_height(size) for tag, size in h_sizes.items()}
+    # The calculator rounds each size to whole px first, then computes its line height.
+    def lh(size):
+        return rnd(line_height(rnd(size), w, x_ratio))
 
     return {
-        'font_size': font_size,
-        'content_width': content_width,
-        'ideal_width': ideal_width,
-        'phi': PHI,
-        'scale': scale,
-        'line_heights': line_heights,
-        'spacing': spacing,
-        'headings': h_sizes,
-        'heading_line_heights': h_line_heights,
-        'primary_line_height': primary_lh,
+        "font_size": f, "content_width": w, "x_ratio": x_ratio,
+        "calc_table": [(rnd(s), lh(s)) for s in calc_sizes],  # px, as the calculator shows
+        "body_lh": body_lh,
+        "scale": [(rnd(s), lh(s)) for s in scale],
+        "headings": {k: (rnd(s), lh(s)) for k, s in headings.items()},
+        "spacing": spacing,
     }
 
 
-def format_value(v, unit='px', decimals=3):
-    """Format a numeric value as a CSS value string."""
-    rounded = round(v, decimals)
-    if rounded == int(rounded):
-        return f"{int(rounded)}{unit}"
-    return f"{rounded}{unit}"
+# ── Fluid (Utopia-style) steps ──────────────────────────────────────────────────
+
+def clamp(min_px, max_px, min_vw, max_vw):
+    if abs(max_px - min_px) < 0.01:
+        return rem(max_px)
+    slope = (max_px - min_px) / (max_vw - min_vw)
+    intercept = min_px - slope * min_vw
+    lo, hi = sorted((min_px, max_px))
+    return f"clamp({rem(lo)}, {intercept / ROOT_PX:.4f}rem + {slope * 100:.4f}vw, {rem(hi)})"
 
 
-def generate_css(grt: dict, prefix: str = '', fmt: str = 'css', target: str = '.grt') -> str:
-    """
-    Generate CSS or SCSS from GRT data.
-
-    - prefix: variable name prefix (e.g. 'grt-')
-    - fmt: 'css' (custom properties) or 'scss' (SCSS variables)
-    - target: CSS selector to scope styles to (default: '.grt')
-    """
-    fs = grt['font_size']
-    lh = grt['primary_line_height']
-    scale = grt['scale']
-    lhs = grt['line_heights']
-    sp = grt['spacing']
-    h = grt['headings']
-    hlh = grt['heading_line_heights']
-    cw = grt['content_width']
-    phi = grt['phi']
-
-    p = prefix or 'grt-'  # Default variable prefix
-
-    lines = []
-    lines.append(f"/* ============================================================")
-    lines.append(f"   Golden Ratio Typography")
-    lines.append(f"   Base: {fs}px  |  Content width: {cw}px  |  φ = {phi:.10f}")
-    lines.append(f"   Generated by the GRT Skill (grtcalculator.com)")
-    lines.append(f"   ============================================================ */")
-    lines.append("")
-
-    if fmt == 'scss':
-        # SCSS variables
-        lines.append("// ── Typographic scale ───────────────────────────────────────────")
-        lines.append(f"${p}scale-1:  {format_value(scale[0])};  // body / base")
-        lines.append(f"${p}scale-2:  {format_value(scale[1])};  // 1 step  (×φ)")
-        lines.append(f"${p}scale-3:  {format_value(scale[2])};  // 2 steps (×φ²)")
-        lines.append(f"${p}scale-4:  {format_value(scale[3])};  // 3 steps (×φ³)")
-        lines.append(f"${p}scale-5:  {format_value(scale[4])};  // 4 steps (×φ⁴)")
-        lines.append(f"${p}scale-6:  {format_value(scale[5])};  // 5 steps (×φ⁵)")
-        lines.append("")
-        lines.append("// ── Line heights ────────────────────────────────────────────────")
-        for i, (s, lh_val) in enumerate(zip(scale, lhs), 1):
-            lines.append(f"${p}lh-{i}:     {format_value(lh_val)};  // for {format_value(s)} text")
-        lines.append("")
-        lines.append("// ── Spacing units ───────────────────────────────────────────────")
-        for key, val in sp.items():
-            lines.append(f"${p}space-{key}: {format_value(val)};")
-        lines.append("")
-        lines.append("// ── Content width ───────────────────────────────────────────────")
-        lines.append(f"${p}content-width: {format_value(cw)};")
-        lines.append(f"${p}ideal-width:   {format_value(grt['ideal_width'])};")
-        lines.append("")
-        lines.append("// ── Heading sizes ───────────────────────────────────────────────")
-        for tag, size in h.items():
-            lines.append(f"${p}{tag}-size: {format_value(size)};")
-        lines.append("")
-        lines.append("// ── Heading line heights ────────────────────────────────────────")
-        for tag, lh_val in hlh.items():
-            lines.append(f"${p}{tag}-lh:   {format_value(lh_val)};")
-
-    else:
-        # CSS custom properties
-        lines.append(f":root {{")
-        lines.append(f"  /* ── Typographic scale ─────────────────────────────────────── */")
-        lines.append(f"  --{p}scale-1:  {format_value(scale[0])};  /* body / base */")
-        lines.append(f"  --{p}scale-2:  {format_value(scale[1])};  /* 1 step  (×φ) */")
-        lines.append(f"  --{p}scale-3:  {format_value(scale[2])};  /* 2 steps (×φ²) */")
-        lines.append(f"  --{p}scale-4:  {format_value(scale[3])};  /* 3 steps (×φ³) */")
-        lines.append(f"  --{p}scale-5:  {format_value(scale[4])};  /* 4 steps (×φ⁴) */")
-        lines.append(f"  --{p}scale-6:  {format_value(scale[5])};  /* 5 steps (×φ⁵) */")
-        lines.append(f"")
-        lines.append(f"  /* ── Line heights ──────────────────────────────────────────── */")
-        for i, (s, lh_val) in enumerate(zip(scale, lhs), 1):
-            lines.append(f"  --{p}lh-{i}:     {format_value(lh_val)};  /* for {format_value(s)} text */")
-        lines.append(f"")
-        lines.append(f"  /* ── Spacing units ─────────────────────────────────────────── */")
-        for key, val in sp.items():
-            lines.append(f"  --{p}space-{key}: {format_value(val)};")
-        lines.append(f"")
-        lines.append(f"  /* ── Content width ─────────────────────────────────────────── */")
-        lines.append(f"  --{p}content-width: {format_value(cw)};")
-        lines.append(f"  --{p}ideal-width:   {format_value(grt['ideal_width'])};")
-        lines.append(f"")
-        lines.append(f"  /* ── Heading sizes ─────────────────────────────────────────── */")
-        for tag, size in h.items():
-            lines.append(f"  --{p}{tag}-size: {format_value(size)};")
-        lines.append(f"")
-        lines.append(f"  /* ── Heading line heights ──────────────────────────────────── */")
-        for tag, lh_val in hlh.items():
-            lines.append(f"  --{p}{tag}-lh:   {format_value(lh_val)};")
-        lines.append(f"}}")
-
-    # ── Applied styles block ─────────────────────────────────────────────────
-    lines.append("")
-    lines.append(f"/* ============================================================")
-    lines.append(f"   Applied GRT Styles")
-    lines.append(f"   Add class \"{target.lstrip('.')}\" to your root element, or adjust")
-    lines.append(f"   the selector below to match your layout.")
-    lines.append(f"   ============================================================ */")
-    lines.append("")
-
-    if fmt == 'scss':
-        var = lambda name: f"${p}{name}"
-    else:
-        var = lambda name: f"var(--{p}{name})"
-
-    body_sel = "body" if target in ("body", ":root") else f"{target}, {target} body"
-    lines.append(f"{body_sel} {{")
-    lines.append(f"  font-size:   {format_value(fs)};")
-    lines.append(f"  line-height: {var('lh-1')};")
-    lines.append(f"}}")
-    lines.append("")
-    lines.append(f"/* Paragraphs and readable content */")
-    lines.append(f"{target} p,")
-    lines.append(f"{target} li,")
-    lines.append(f"{target} blockquote {{")
-    lines.append(f"  max-width:   {var('content-width')};")
-    lines.append(f"  font-size:   {var('scale-1')};")
-    lines.append(f"  line-height: {var('lh-1')};")
-    lines.append(f"  margin-bottom: {var('space-md')};")
-    lines.append(f"}}")
-    lines.append("")
-    lines.append(f"/* Headings */")
-    for tag, size in h.items():
-        lh_val = hlh[tag]
-        mt = sp['lg'] if tag in ('h1', 'h2') else sp['md']
-        mb = sp['sm']
-        if fmt == 'scss':
-            lines.append(f"{target} {tag} {{")
-            lines.append(f"  font-size:   {format_value(size)};")
-            lines.append(f"  line-height: {format_value(lh_val)};")
-            lines.append(f"  margin-top:    {format_value(mt)};")
-            lines.append(f"  margin-bottom: {format_value(mb)};")
-            lines.append(f"}}")
-        else:
-            lines.append(f"{target} {tag} {{")
-            lines.append(f"  font-size:   {var(f'{tag}-size')};")
-            lines.append(f"  line-height: {var(f'{tag}-lh')};")
-            lines.append(f"  margin-top:    {format_value(mt)};")
-            lines.append(f"  margin-bottom: {format_value(mb)};")
-            lines.append(f"}}")
-        lines.append("")
-
-    lines.append(f"/* Small text / captions */")
-    lines.append(f"{target} small,")
-    lines.append(f"{target} caption,")
-    lines.append(f"{target} figcaption {{")
-    lines.append(f"  font-size:   {format_value(round(fs / PHI))};")
-    lines.append(f"  line-height: {var('lh-1')};")
-    lines.append(f"}}")
-    lines.append("")
-    lines.append(f"/* Blockquote */")
-    lines.append(f"{target} blockquote {{")
-    lines.append(f"  font-size:   {var('scale-2')};")
-    lines.append(f"  line-height: {var('lh-2')};")
-    lines.append(f"  padding-left: {var('space-md')};")
-    lines.append(f"  border-left: {format_value(round(fs / PHI**2))} solid currentColor;")
-    lines.append(f"}}")
-    lines.append("")
-    lines.append(f"/* Spacing utility classes */")
-    for key, val in sp.items():
-        lines.append(f".mt-{key} {{ margin-top:    {format_value(val)}; }}")
-        lines.append(f".mb-{key} {{ margin-bottom: {format_value(val)}; }}")
-        lines.append(f".py-{key} {{ padding-top: {format_value(val)}; padding-bottom: {format_value(val)}; }}")
-
-    return "\n".join(lines)
+def fluid(grt, min_font, min_vw, max_vw, min_ratio, gutter, x_ratio):
+    """Steps -1..5. Max end is GRT (ratio √φ from the body); min end uses min_font and min_ratio,
+    with its line height computed by GRT at the narrow column (min viewport − 2 gutters)."""
+    f, w = grt["font_size"], grt["content_width"]
+    min_w = max(min_vw - 2 * gutter, 200)
+    steps = {}
+    for n in range(-1, 6):
+        max_size = f * SQRT_PHI ** n
+        min_size = min_font * min_ratio ** n
+        # Line heights from whole-px sizes, as the calculator computes them.
+        max_lh = rnd(line_height(rnd(max_size), w, x_ratio))
+        min_lh = rnd(line_height(rnd(min_size), min_w, x_ratio))
+        steps[n] = (clamp(min_size, max_size, min_vw, max_vw), clamp(min_lh, max_lh, min_vw, max_vw),
+                    (min_size, max_size, min_lh, max_lh))
+    return steps
 
 
-def print_summary(grt: dict):
-    """Print a human-readable summary of the GRT values."""
-    fs = grt['font_size']
-    cw = grt['content_width']
-    scale = grt['scale']
-    lhs = grt['line_heights']
-    sp = grt['spacing']
-    h = grt['headings']
-    hlh = grt['heading_line_heights']
+# ── Output ──────────────────────────────────────────────────────────────────────
 
-    print(f"\n{'═'*58}")
-    print(f"  Golden Ratio Typography Summary")
-    print(f"  Base: {fs}px  |  Content width: {cw}px")
-    print(f"  φ = {PHI:.6f}")
-    print(f"{'═'*58}")
-    print(f"\n  TYPOGRAPHIC SCALE")
-    print(f"  {'Level':<10} {'Size':>8}  {'Line Height':>12}")
-    print(f"  {'-'*32}")
-    labels = ['body', 'h4/lead', 'h3', 'h2', 'h1', 'display']
-    for i, (s, lh_v, label) in enumerate(zip(scale, lhs, labels), 1):
-        print(f"  {label:<10} {format_value(s):>8}  {format_value(lh_v):>12}")
-
-    print(f"\n  HEADINGS")
-    print(f"  {'Tag':<6} {'Size':>8}  {'Line Height':>12}")
-    print(f"  {'-'*28}")
-    for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-        print(f"  {tag:<6} {format_value(h[tag]):>8}  {format_value(hlh[tag]):>12}")
-
-    print(f"\n  SPACING UNITS")
-    for key, val in sp.items():
-        print(f"  {key:<6} {format_value(val)}")
-
-    print(f"\n  IDEAL CONTENT WIDTH: {format_value(grt['ideal_width'])}")
-    print(f"{'═'*58}\n")
+def rem(px: float) -> str:
+    v = round(px / ROOT_PX, 4)
+    return f"{v:g}rem"
 
 
-def inject_into_html(html_path: str, css: str):
-    """Inject GRT styles into an HTML file's <head>."""
-    path = Path(html_path)
-    if not path.exists():
-        print(f"  ✗ File not found: {html_path}", file=sys.stderr)
-        return False
+def generate_css(grt, steps, prefix="grt-", target="body", applied=True):
+    p = prefix
+    f, w = grt["font_size"], grt["content_width"]
+    x = grt["x_ratio"]
+    xdesc = f"x-height/cap {x:.4f}" if x is not None else "no x-height correction"
+    out = [
+        "/* ============================================================",
+        "   Golden Ratio Typography (GENERATED by grt.py v2, do not hand-edit)",
+        f"   Base {f:g}px  |  Content width {w:g}px  |  {xdesc}",
+        "   Calibrated to grtcalculator.com; regenerate when size, column (>40px) or face changes.",
+        "   ============================================================ */",
+        "",
+        ":root {",
+        "  /* Typographic scale: scale-1 is the body, each step ×φ */",
+    ]
+    for i, (s, lh) in enumerate(grt["scale"], 1):
+        out.append(f"  --{p}scale-{i}: {rem(s)};  /* {s:.2f}px */")
+    out.append("")
+    for i, (s, lh) in enumerate(grt["scale"], 1):
+        out.append(f"  --{p}lh-{i}: {rem(lh)};  /* {lh}px */")
+    for i, (s, lh) in enumerate(grt["scale"], 1):
+        out.append(f"  --{p}lh-ratio-{i}: {lh / s:.4f};")
+    out.append("")
+    out.append("  /* Headings (calculator scale: φ², φ^1.5, φ, √φ; h5 φ^0.25; h6 body) */")
+    for tag, (s, lh) in grt["headings"].items():
+        out.append(f"  --{p}{tag}-size: {rem(s)};  /* {s:.2f}px */")
+        out.append(f"  --{p}{tag}-lh: {rem(lh)};  /* {lh}px, ratio {lh / s:.4f} */")
+    out.append("")
+    out.append("  /* Spacing from the body line height */")
+    for k, v in grt["spacing"].items():
+        out.append(f"  --{p}space-{k}: {rem(v)};  /* {v}px */")
+    out.append("")
+    out.append(f"  --{p}content-width: {rem(w)};  /* {w:g}px */")
+    if steps:
+        out.append("")
+        out.append("  /* Fluid steps: step-0 body, 1-4 = h4..h1 at the max viewport */")
+        for n, (size, lh, (mn, mx, mnl, mxl)) in steps.items():
+            out.append(f"  --{p}step-{n}: {size};  /* {mn:.1f} -> {mx:.1f}px */")
+            out.append(f"  --{p}step-lh-{n}: {lh};  /* {mnl} -> {mxl}px */")
+    out.append("}")
 
-    content = path.read_text(encoding='utf-8')
-
-    # Remove existing GRT block if present
-    content = re.sub(
-        r'\n?<!-- GRT-START -->.*?<!-- GRT-END -->\n?',
-        '',
-        content,
-        flags=re.DOTALL
-    )
-
-    style_block = f"\n<!-- GRT-START -->\n<style>\n{css}\n</style>\n<!-- GRT-END -->\n"
-
-    # Insert before </head>
-    if '</head>' in content:
-        content = content.replace('</head>', f"{style_block}</head>", 1)
-    elif '<body' in content:
-        content = content.replace('<body', f"{style_block}<body", 1)
-    else:
-        content = style_block + content
-
-    path.write_text(content, encoding='utf-8')
-    print(f"  ✓ Injected GRT styles into {html_path}")
-    return True
+    if applied:
+        sel = target
+        fl = bool(steps)
+        def size(n, tag):
+            return f"var(--{p}step-{n})" if fl else f"var(--{p}{tag}-size)"
+        def lhv(n, tag):
+            return f"var(--{p}step-lh-{n})" if fl else f"var(--{p}{tag}-lh)"
+        out += [
+            "",
+            "/* Applied defaults (override in style.css; no borders or colours here) */",
+            f"{sel} {{ font-size: {size(0, 'h6')}; line-height: {lhv(0, 'h6')}; }}",
+            f"{sel} p {{ margin-block: 0 var(--{p}space-md); }}",
+        ]
+        for tag, n in (("h1", 4), ("h2", 3), ("h3", 2), ("h4", 1)):
+            out.append(f"{sel} {tag} {{ font-size: {size(n, tag)}; line-height: {lhv(n, tag)}; "
+                       f"margin-block: var(--{p}space-lg) var(--{p}space-sm); }}")
+        if fl:
+            out.append(f"{sel} small, {sel} figcaption {{ font-size: var(--{p}step--1); "
+                       f"line-height: var(--{p}step-lh--1); }}")
+    return "\n".join(out) + "\n"
 
 
-def find_css_files(directory: str):
-    """Recursively find CSS/SCSS files in a directory."""
-    root = Path(directory)
-    found = []
-    skip_dirs = {'node_modules', '.git', 'vendor', 'dist', 'build', '__pycache__'}
-    for ext in ('*.css', '*.scss', '*.sass'):
-        for f in root.rglob(ext):
-            if not any(skip in f.parts for skip in skip_dirs):
-                found.append(f)
-    return sorted(found)
+def print_summary(grt, steps):
+    print(f"\nGRT  base {grt['font_size']:g}px  width {grt['content_width']:g}px  "
+          + (f"x/cap {grt['x_ratio']:.4f}" if grt['x_ratio'] is not None else "no x-height correction"))
+    print("  calculator table (size / line height):")
+    for s, lh in grt["calc_table"]:
+        print(f"    {s:>4}px / {lh}px")
+    print("  spacing: " + "  ".join(f"{k} {v}" for k, v in grt["spacing"].items()))
+    if steps:
+        print("  fluid steps (min -> max px):")
+        for n, (_, _, (mn, mx, mnl, mxl)) in steps.items():
+            print(f"    step {n:>2}: {mn:5.1f} -> {mx:5.1f}   lh {mnl} -> {mxl}")
+    print()
 
 
-def scan_project(directory: str, css: str, fmt: str):
-    """Save GRT file and report where to import it in a project."""
-    root = Path(directory)
-    ext = '.scss' if fmt == 'scss' else '.css'
-    out_path = root / f"grt{ext}"
-    out_path.write_text(css, encoding='utf-8')
-    print(f"\n  ✓ Saved GRT stylesheet: {out_path}")
+# ── Self-test against stored calculator output ──────────────────────────────────
 
-    css_files = find_css_files(directory)
-    if css_files:
-        print(f"\n  Found {len(css_files)} stylesheet(s) in project:")
-        for f in css_files[:10]:
-            print(f"    • {f.relative_to(root)}")
-        if len(css_files) > 10:
-            print(f"    … and {len(css_files) - 10} more")
-        print(f"\n  To use GRT variables, add this import at the top of your main stylesheet:")
-        rel = out_path.relative_to(root)
-        if fmt == 'scss':
-            print(f"    @use './{rel}' as *;")
-            print(f"    // or: @import './{rel}';")
-        else:
-            print(f"    @import url('./{rel}');")
-            print(f"    // or: <link rel=\"stylesheet\" href=\"{rel}\">")
-    return out_path
+def self_test(fixture_path: Path) -> int:
+    import json
+    cases = json.loads(fixture_path.read_text())
+    fails = 0
+    for c in cases:
+        g = calculate(c["size"], c["width"], c["x_ratio"])
+        want_table = [tuple(r) for r in c["scale"]]
+        want_space = c["spacing"]
+        got_space = [g["spacing"][k] for k in ("lg", "md", "sm", "xs", "2xs", "3xs")]
+        if g["calc_table"] != want_table or got_space != want_space:
+            fails += 1
+            print(f"MISMATCH {c['font']} {c['size']}/{c['width']}: got {g['calc_table']} {got_space}, "
+                  f"calculator {want_table} {want_space}")
+    print(f"{len(cases) - fails}/{len(cases)} calculator cases match exactly")
+    return 1 if fails else 0
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Golden Ratio Typography Calculator — Generate GRT CSS',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python grt.py --font-size 16 --content-width 680
-  python grt.py --font-size 18 --content-width 800 --format scss --output styles/grt.scss
-  python grt.py --font-size 16 --content-width 680 --inject index.html
-  python grt.py --font-size 16 --content-width 680 --scan ./src
-        """
-    )
-    parser.add_argument('--font-size', '-f', type=float, required=True,
-                        help='Base font size in pixels (e.g. 16)')
-    parser.add_argument('--content-width', '-w', type=float, default=680,
-                        help='Content/column width in pixels (default: 680)')
-    parser.add_argument('--format', choices=['css', 'scss'], default='css',
-                        help='Output format: css (custom properties) or scss (default: css)')
-    parser.add_argument('--prefix', default='grt-',
-                        help='Variable name prefix (default: grt-)')
-    parser.add_argument('--target', default='.grt',
-                        help='CSS selector for applied styles (default: .grt)')
-    parser.add_argument('--output', '-o', default=None,
-                        help='Write CSS to this file path')
-    parser.add_argument('--inject', default=None,
-                        help='Inject styles into this HTML file')
-    parser.add_argument('--scan', default=None,
-                        help='Save grt.css to this project directory and report import locations')
-    parser.add_argument('--x-height', type=float, default=None,
-                        help='Font x-height ratio for correction (0.45–0.60 typical)')
-    parser.add_argument('--no-summary', action='store_true',
-                        help='Suppress the summary table')
-    parser.add_argument('--css-only', action='store_true',
-                        help='Print only the CSS (no summary)')
+    ap = argparse.ArgumentParser(description="Golden Ratio Typography tokens, calibrated to grtcalculator.com",
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--font-size", "-f", type=float, help="Body size in px at the max viewport")
+    ap.add_argument("--content-width", "-w", type=float, default=680, help="Readable column width in px")
+    ap.add_argument("--font-file", help="Body font .ttf/.otf; x-height ÷ cap height is read from it")
+    ap.add_argument("--x-ratio", type=float, help="x-height ÷ cap height (typically 0.62-0.80)")
+    ap.add_argument("--x-height", type=float, help=argparse.SUPPRESS)  # v1 flag, refused below
+    ap.add_argument("--min-font-size", type=float, help="Body size at the min viewport (default: base − 1)")
+    ap.add_argument("--min-viewport", type=float, default=360)
+    ap.add_argument("--max-viewport", type=float, default=1240)
+    ap.add_argument("--min-ratio", type=float, default=1.2, help="Type ratio at the min viewport")
+    ap.add_argument("--gutter", type=float, default=16, help="Side gutter at the min viewport, px")
+    ap.add_argument("--no-fluid", action="store_true", help="Static tokens only")
+    ap.add_argument("--no-applied", action="store_true", help="Tokens only, no element defaults")
+    ap.add_argument("--prefix", default="grt-")
+    ap.add_argument("--target", default="body")
+    ap.add_argument("--output", "-o")
+    ap.add_argument("--css-only", action="store_true")
+    ap.add_argument("--measure", metavar="FONT", help="Print a font's x-height ÷ cap height and exit")
+    ap.add_argument("--self-test", action="store_true", help="Check against stored calculator results")
+    a = ap.parse_args()
 
-    args = parser.parse_args()
-
-    # Calculate GRT
-    grt = calculate_grt(args.font_size, args.content_width, args.x_height)
-    css = generate_css(grt, prefix=args.prefix, fmt=args.format, target=args.target)
-
-    if not args.no_summary and not args.css_only:
-        print_summary(grt)
-
-    if args.css_only:
-        print(css)
+    here = Path(__file__).resolve().parent
+    if a.self_test:
+        sys.exit(self_test(here / "grt_calculator_fixtures.json"))
+    if a.measure:
+        print(f"{measure_x_ratio(a.measure):.4f}")
         return
+    if a.font_size is None:
+        ap.error("--font-size is required")
 
-    if args.inject:
-        inject_into_html(args.inject, css)
-        return
+    x_ratio = a.x_ratio
+    if a.x_height is not None:
+        sys.exit("--x-height was v1's flag and took x-height ÷ em (e.g. Georgia 0.49). GRT's correction "
+                 "needs x-height ÷ CAP height (Georgia ≈ 0.70). Use --font-file <font.ttf> or --x-ratio.")
+    if a.font_file:
+        x_ratio = measure_x_ratio(a.font_file)
+    if x_ratio is not None and not 0.55 <= x_ratio <= 0.9:
+        sys.exit(f"x-ratio {x_ratio:.3f} looks wrong: it is x-height ÷ cap height, usually 0.62-0.80.")
 
-    if args.scan:
-        scan_project(args.scan, css, args.format)
-        return
-
-    if args.output:
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(css, encoding='utf-8')
-        print(f"  ✓ Saved: {args.output}\n")
-    else:
+    grt = calculate(a.font_size, a.content_width, x_ratio)
+    steps = None if a.no_fluid else fluid(grt, a.min_font_size or a.font_size - 1, a.min_viewport,
+                                           a.max_viewport, a.min_ratio, a.gutter, x_ratio)
+    css = generate_css(grt, steps, a.prefix, a.target, not a.no_applied)
+    if not a.css_only:
+        print_summary(grt, steps)
+    if a.output:
+        Path(a.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.output).write_text(css, encoding="utf-8")
+        print(f"wrote {a.output}")
+    elif a.css_only:
         print(css)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

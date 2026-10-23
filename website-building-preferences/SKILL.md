@@ -21,13 +21,17 @@ description: >-
 - **Install:** this file is the global copy (synced via the skills repo). `grt.py` lives next to it and
   is symlinked at `~/.claude/tools/grt.py`. Each site repo also carries a `CLAUDE.md` with its own
   §13 entry; the repo file wins.
-- **grt.py accuracy (checked 2026-10-23 against grtcalculator.com's own API):** sizes match exactly;
-  body line height within 1 px; **heading line heights run 4-8% tighter** than the calculator
-  (Literata 19/646: h1 71 vs 77, h2 57 vs 61); spacing within 1-3 px. It emits px (not rem), and its
-  applied-styles block hardcodes px margins and a left-border blockquote that §7 forbids. Until it is
-  fixed, use its tokens only and cross-check line heights with the calculator (POST
-  `action=grtc` to `https://grtcalculator.com/wp-admin/admin-ajax.php`, see the
-  `website-design-references` skill's notes).
+- **grt.py v2 (2026-10-23, Will approved the fix).** Rebuilt on the calculator's published equation
+  (grtcalculator.com/math/): `h = f·[(3−φ) + (2φ−3)·w/(34f) + c]`, `c = (x − (φ−1))/φ`, with sizes rounded
+  to whole px before their line heights and spacing chain-rounded, exactly as the calculator does.
+  `--self-test` replays **168 stored calculator answers** (6 fonts × 7 sizes × 4 widths) and matches all of
+  them. Output is rem plus Utopia-style fluid `--grt-step-N` / `--grt-step-lh-N`; no border-left quotes.
+  v1 ran heading line heights 4–8% tight.
+- **x-height means x-height ÷ CAP height** in GRT. §3's `--x-height 0.49`-style values are x-height ÷ em and
+  give wrong line heights; v2 refuses `--x-height` and takes `--font-file <ttf/otf>` (reads OS/2) or
+  `--x-ratio`. File-measured ratios can differ slightly from the calculator's browser-measured ones
+  (Source Serif 4 0.709 vs 0.736, ≤1 px difference); the calculator applies no correction at all for fonts it
+  has no data for (Inter: implied 0.618). Prefer the font file: it's reproducible for any face.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 
