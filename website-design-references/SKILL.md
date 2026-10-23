@@ -19,6 +19,8 @@ Sites Will has pointed at and said "I like this". Each entry records **what he n
 new site; don't copy a site's identity (name, logo, signature, colours as a set), borrow its
 decisions.
 
+**Will's rules win over any reference site.** Load `website-building-preferences` first; where a reference uses something its §7 bans (cream paper with warm accents, small-caps eyebrow labels, decorative numbering), take the craft, not the pattern.
+
 When Will names a new reference site, analyse it the same way (fetch the HTML and the CSS bundle,
 read `@font-face`, `:root`/theme variables and the article markup) and add an entry here.
 
