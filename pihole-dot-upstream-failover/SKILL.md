@@ -112,6 +112,14 @@ health-checked, alerted, actuated failover**, not a standing blend:
    - **Two attempts per protocol within a run** (2s each), so one dropped packet doesn't fail over.
      A failover restarts FTL (below), so false positives cost real outages. Keep the worst-case
      probe time inside the interval; the homelab measured 8.1s against a blackholed host.
+   - **If the primary forwards to an upstream** (the homelab's Unbound → Quad9 DoT since
+     2026-10-23), a fixed-name probe only tests the cache. With `serve-expired` a stale answer
+     survives for a day, so a dead upstream reads healthy while every uncached name SERVFAILs
+     (reproduced with a test Unbound behind an nft drop). Add a probe for a **never-seen random
+     name** (`pdf-probe-<ns>-<rand>.cloudflare.com`) that must return NOERROR/NXDOMAIN.
+     `unbound-control flush <name>` is NOT a fix: it marks entries expired, which serve-expired
+     then serves. Pick a zone with NSEC "black lies" (cloudflare.com) so `aggressive-nsec` can't
+     synthesize the answer locally.
 3. On a genuine health-check failure: **clean cutover** (replace the upstream entirely, don't
    blend) to the secondary, plus an **immediate alert** (Telegram, PagerDuty, whatever's already
    wired up) — the human is told the instant the fallback engages, not after the fact via a
@@ -183,3 +191,19 @@ per-try timeout, and treat "never got any response" as a `warn` (worth a glance)
 `fail` (confirmed broken), reserving `fail` for an actual non-`SERVFAIL` answer. See the
 homelab's `weekly-housekeeping-checks.sh` `pihole_dnssec_validation` check (fixed
 2026-08-30, `homelab-ansible` commit `bd8bfc7`) for a working example of this shape.
+
+## Unbound DoT forwarding gotchas (2026-10-23)
+
+- **A HUP reload does not load `tls-cert-bundle`.** Adding a `forward-tls-upstream` zone plus the
+  bundle by `systemctl reload unbound` left every handshake failing `certificate verify failed /
+  unable to get local issuer certificate` until a full restart. Restart on any TLS-related config
+  change. A fresh test instance on another port won't show it, because it starts cold.
+- **Check the network allows :853 from that host before switching.** A gateway "block DoT except
+  the Pi-hole" rule made the iMac replica SERVFAIL everything. `timeout 4 bash -c '</dev/tcp/9.9.9.9/853'`
+  from the host first, with `:443` as a control.
+- Never set `forward-first: yes` under a no-silent-fallback constraint: it falls back to recursion
+  when the forwarders fail.
+- Verify with `dig proto.on.quad9.net TXT` (returns `"dot"` over DoT), `dnssec-failed.org` →
+  SERVFAIL, and Google's `o-o.myaddr.l.google.com TXT` (no `edns0-client-subnet` line = no ECS).
+- Quad9-blocked domains that are DNSSEC-signed come back **SERVFAIL** through a validating Unbound
+  (Quad9's NXDOMAIN has no proof), not NXDOMAIN. Still blocked; just don't read it as an outage.
