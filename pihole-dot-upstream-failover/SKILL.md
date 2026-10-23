@@ -207,3 +207,13 @@ homelab's `weekly-housekeeping-checks.sh` `pihole_dnssec_validation` check (fixe
   SERVFAIL, and Google's `o-o.myaddr.l.google.com TXT` (no `edns0-client-subnet` line = no ECS).
 - Quad9-blocked domains that are DNSSEC-signed come back **SERVFAIL** through a validating Unbound
   (Quad9's NXDOMAIN has no proof), not NXDOMAIN. Still blocked; just don't read it as an outage.
+- **Containerized Pi-hole (docker):** an `FTLCONF_dns_upstreams` env var makes `dns.upstreams`
+  read-only, so a watcher can't flip it — unpin it. But removing the var does NOT keep the old value:
+  FTL falls back to the image default (`8.8.8.8, 8.8.4.4`, plaintext) on recreate. Set the value with
+  `docker exec pihole pihole-FTL --config dns.upstreams '[ "127.0.0.1#5335" ]'` in the same breath
+  (better: have Ansible set it before the recreate is even possible to observe). The in-container FTL
+  restart a change triggers is fine — the container doesn't restart.
+- **Simulating an upstream outage for a containerized Unbound:** its egress goes through the host's
+  FORWARD path, so an nft `output` drop alone doesn't block it — add a `forward`-hook chain too. And
+  don't name the chain `fwd`: it's a reserved word in nft ("syntax error, unexpected fwd").
+
