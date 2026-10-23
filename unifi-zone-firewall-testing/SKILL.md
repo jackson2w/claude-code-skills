@@ -1,6 +1,6 @@
 ---
 name: unifi-zone-firewall-testing
-description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh", "secondary WAN DNS leaks around Pi-hole", "failover bypasses DNS filter", "wan_dns_preference per WAN entry", "U5G DNS not manual", "DNS redirect works but clients get no answer", "destination's own firewall blocks redirected VLAN", "Pi-hole local nftables allow-list missing subnet", "DNAT and zone policy pass but service still unreachable", "reorder firewall policies API", "batch-reorder", "move rule above block UniFi", "hit counter moved after reorder".
+description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh", "secondary WAN DNS leaks around Pi-hole", "failover bypasses DNS filter", "wan_dns_preference per WAN entry", "U5G DNS not manual", "DNS redirect works but clients get no answer", "destination's own firewall blocks redirected VLAN", "Pi-hole local nftables allow-list missing subnet", "DNAT and zone policy pass but service still unreachable", "reorder firewall policies API", "batch-reorder", "move rule above block UniFi", "hit counter moved after reorder", "FirewallPolicyCreateRespondTrafficPolicyNotAllowed", "allow one host through an outbound block", "exception above a block rule", "narrow allow rule port 853".
 ---
 
 # Testing UniFi zone firewall policies so the results mean something
@@ -411,6 +411,27 @@ expensive.
 ## A one-device exception needs --src-ip, or it silently becomes zone-wide
 
 `unifi-fw add-allow` without `--src-ip` matches **every device in the source zone**, not just the one intended -- a rule meant to carve out a single IoT camera's talk-back path would instead quietly open that path for the entire IoT VLAN. Always pass `--src-ip <device-ip>` to scope an exception to specific sources, and verify by reading the created policy back (its source-IP field), not by trusting the create call's 200/`ok`. First real use: the Nanit talk-back exception, 2026-10-05 (homelab-ansible `39dce16`) -- `192.168.20.109` scoped to only the household phones/iPads on UDP high ports + TCP 4443.
+
+## One host's exception to an outbound block: a narrow allow above it (2026-10-23)
+
+To let one LAN host through a "Trusted → External :853 blocked except the Pi-hole" rule, add a
+**separate narrow allow above the block** (`--src-ip` host, `--ip` each permitted destination,
+`--port`, `--proto tcp`) rather than widening the block's except-list. Widening exempts that host
+for every destination on the port; the narrow allow keeps the rest blocked.
+
+- **Allows toward External can't carry a respond rule.** The controller refuses
+  `create_allow_respond: true` toward External (as toward Gateway) with HTTP 400
+  `api.err.FirewallPolicyCreateRespondTrafficPolicyNotAllowed`; WAN replies ride connection
+  tracking. `unifi-fw` sends `false` for both since homelab-ansible `a7f6eb7`.
+- **Packet-test four ways**, with `timeout 4 bash -c '</dev/tcp/<ip>/<port>'`:
+  1. allowed host → every allowed destination: REACHED;
+  2. allowed host → an unlisted destination on the same port: BLOCKED (the allow is narrow);
+  3. another host on the network → an allowed destination: BLOCKED (the block still applies);
+  4. a control on the same destinations, e.g. `:443`: REACHED (a BLOCKED in 2–3 is the rule, not
+     a dead path).
+  Also re-test any host the block's except-list already carved out.
+- After inserting above a busy rule, `hits` displayed against the new rule. That's the
+  index-shift effect described under reordering above, not real traffic.
 
 ## Live WAN failover drill, and AP radio changes (2026-10-09)
 

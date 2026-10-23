@@ -104,6 +104,11 @@ Monitoring, reporting, access, and secrets across the whole fleet rather than an
   leaking it while verifying: the consumer inventory, and the safe probes that confirm a value
   works without printing it.
 
+- **forced-outage-drill** — simulating a dependency outage on a live host so a watcher/failover
+  test means something: prove the block bites (counters + a control), container egress needs a
+  forward-hook chain, defeat caches that hide the fault, dead-man revert, stubbed alerts, and
+  old-vs-new watcher comparisons on a throwaway instance.
+
 ## Cloudflare
 
 - **cloudflare** — general-purpose Cloudflare platform skill: Workers, Pages, KV/D1/R2, Workers
