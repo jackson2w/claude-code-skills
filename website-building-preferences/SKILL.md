@@ -32,6 +32,7 @@ description: >-
   `--x-ratio`. File-measured ratios can differ slightly from the calculator's browser-measured ones
   (Source Serif 4 0.709 vs 0.736, ≤1 px difference); the calculator applies no correction at all for fonts it
   has no data for (Inter: implied 0.618). Prefer the font file: it's reproducible for any face.
+- **Preview deploys:** throwaway mockups go to the Direct Upload project `wj-site-mockups` (wj-site-mockups.pages.dev) with `CF_PAGES_TOKEN` (Infisical homelab-fleet/dev, Pages Write, Will 2026-10-23). Create new Pages projects via the API, not `wrangler pages project create` (see cloudflare-pages-gotchas). Never touch the live `j2wtalent` Pages project from a mockup.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 

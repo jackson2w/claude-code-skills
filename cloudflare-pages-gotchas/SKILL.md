@@ -83,6 +83,20 @@ that has a catch-all middleware, implement the redirect *inside* the
 middleware itself — checking `url.pathname` and returning
 `Response.redirect(...)` — rather than relying on `_redirects` at all.
 
+## `wrangler pages project create` now makes a *Workers* project (wrangler 4.149, 2026-10)
+
+Seen 2026-10-23: `wrangler pages project create <name>` printed "Delegating to the latest version of
+Cloudflare Pages, now part of Cloudflare Workers", **wrote a `wrangler.jsonc` (Worker + assets) into the
+repo, rewrote `package.json` (added `deploy`/`preview` scripts and wrangler as a dependency), appended to
+`.gitignore` and grew `package-lock.json` by ~1,500 lines**, then failed with "Pages project does not
+exist". No Pages project was created. Every edit was local and uncommitted (`git checkout --` + delete the
+jsonc to undo).
+
+**To make a real Pages project, use the API, then deploy with wrangler as before**:
+`POST /accounts/{id}/pages/projects {"name": "...", "production_branch": "main"}` (Pages Write token), then
+`wrangler pages deploy _site --project-name <name> --branch main`. Deploying to an existing Pages project
+is unaffected. Long-lived sites still go through dashboard Git integration (website-building-preferences §12).
+
 ## Related
 
 For Workers Cron Trigger gotchas (day-of-week numbering, testing
