@@ -238,3 +238,29 @@ dns.hosts edit, or any FTL restart, postpones the cleanup by at least a day, and
 can postpone it indefinitely (2026-10-02/03: two restarts, no trim). A Unbound HUP reload does
 **not** restart FTL. Check a trim with `count(*) FROM query_storage WHERE timestamp < now-N*86400`;
 the DB file only shrinks with a VACUUM.
+
+## Naming a Docker container: pin its IP first
+
+A Local DNS Record that points at a container on a Compose network stays correct only if that
+address is pinned. Without a pin, Compose hands out addresses from the network's pool when
+containers are recreated. After the next `docker compose up` that recreates them, the record
+quietly labels some other container, or nothing, and no error says so.
+
+Pin the network's subnet, then each named container's address. This is the iMac DNS 2 stack
+(planning repo `imac-dns-stack-docker-compose.yml`, `b3ee2d2`, 2026-10-24):
+```yaml
+services:
+  uptime-kuma:
+    networks:
+      default:
+        ipv4_address: 172.18.0.2
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16   # pin the subnet Docker already chose, so existing addresses stay valid
+```
+The record itself is `"172.18.0.2 imac-uptime-kuma"` in `pihole-dns-hosts.yml` on the primary, and
+nebula-sync copies it to the replica. A host-networked Pi-hole sees bridge containers by their bridge
+address, not as localhost, which is why the container showed up as a bare IP until it was named.
+Applying the pin recreates the containers. On a resolver host, pause its failover watcher first.
