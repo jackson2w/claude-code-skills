@@ -131,6 +131,22 @@ internet, or the drill proves nothing (see the `forced-outage-drill` skill).
 Re-run the playbook afterwards and expect `changed=0`. Compare `ip rule` and the table-51820
 routes against the baseline, so no drill state lingers.
 
+## Monitoring: the kill switch fails silently
+
+Failing closed means a dead tunnel looks like nothing at all: downloads stop and no unit fails.
+`wg-quick@` is a oneshot that stays "active (exited)" whatever the peer does, and handshake age is
+no use either, because WireGuard stops handshaking when idle. Probe the egress itself from a
+container on the `dl` network instead, on a schedule that alerts:
+```
+docker exec pinchflat curl -sS -m 10 https://1.1.1.1/cdn-cgi/trace | sed -n 's/^ip=//p'
+```
+Fail if nothing comes back (tunnel down), or if the result equals the host's own trace IP (a leak).
+Using the IP avoids DNS. Here this is `media_vpn_egress` in the homelab sweep's service category
+(daily drift check), drilled 2026-10-24 by stopping `wg-quick@wg-proton`.
+
+Also check that any yt-dlp bundled in an image is fresh. MeTube's sat 63 days old after the build;
+YouTube breaks old yt-dlp within weeks. Pinchflat updates its own.
+
 ## Gotchas
 
 - **Rules added by hand don't survive a restart.** Everything has to come from the unit, which
