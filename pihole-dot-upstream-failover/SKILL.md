@@ -218,19 +218,21 @@ homelab's `weekly-housekeeping-checks.sh` `pihole_dnssec_validation` check (fixe
   don't name the chain `fwd`: it's a reserved word in nft ("syntax error, unexpected fwd").
 
 
-## Forwarding mode: one client's burst can bench the forwarders (2026-10-25)
+## Forwarding mode: a leak-test burst trips the provider's per-IP block (2026-10-25)
 
-When Unbound forwards to a DoT provider (Quad9 here), a burst of slow, failing names from one
-client, such as a dnsleaktest.org run, makes Unbound block **every** forwarder per query type. It
-then SERVFAILs all uncached names in 0 ms while the provider is reachable, and the watcher fails
-over to stubby. That failover is correct. What's wrong is how long the block lasts: the default
-`infra-host-ttl` is 900 s, and the iMac was still stuck after 18 minutes. Set:
+A DNS leak test (dnsleaktest.org) sends ~1,000+ random, mostly failing names in seconds. **Quad9
+blocks the whole public IP for ~30-60 s** when it sees that, which was proven from a second LAN host
+that sent none of the burst. Unbound makes it about 10x worse by default: on every SERVFAIL it
+re-asks each forwarder up to `outbound-msg-retry` (5) times, and the provider gives the same
+answer each time. The forwarders get benched (`tA 3`, `rto 120000` in `dump_infra`), every
+uncached name SERVFAILs in 0 ms, and the watcher fails over. Set, on every Unbound:
 ```
-infra-host-ttl: 60
-infra-keep-probing: yes
+outbound-msg-retry: 1   # the fix: 1,200-2,400-name bursts absorbed, no block, 0 failed probes
+infra-host-ttl: 60      # backstop: a bench clears in ~1 min, not 15+ (the iMac was stuck 18 min)
+infra-keep-probing: yes # host-down case only; does not fix this on its own
 ```
-Measured by replaying a 1,200-name burst: unaided recovery in 57 s (Unbound 1.26) and 72 s (1.22).
-`infra-keep-probing` alone did not fix it, because it only covers the "host down" case. To unstick
-by hand, run `unbound-control flush_infra all`. A leak test run during the block reports the
-fallback provider (Cloudflare) next to Quad9, which shows up as "WOODYNET" (AS42). Details in the
-`reference_unbound_forwarder_benching` memory.
+Ruled out: `infra-cache-min-rtt` (no help), and a Pi-hole per-client rate limit (real devices
+burst to 700-1,365/min). Testing: a lab Unbound on another port isolates Unbound state, *not* the
+provider's per-IP block, so each burst still briefly affects the house. Pause the watcher and resume
+it only after its own probes pass 3x in a row. Use an external probe from another host as the
+control. Detail: the `reference_unbound_forwarder_benching` memory.
