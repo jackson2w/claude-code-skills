@@ -249,6 +249,9 @@ Quad9 plus sometimes Cloudflare, never the ISP, and treat either as a pass, not 
 would also hide the first minute of a real outage.
 Ruled out: `infra-cache-min-rtt` (no help), a Pi-hole per-client rate limit (real devices burst to
 700-1,365/min), and an Unbound rate cap (normal peaks are above a leak test's per-resolver rate). Testing: a lab Unbound on another port isolates Unbound state, *not* the
-provider's per-IP block, so each burst still briefly affects the house. Pause the watcher and resume
-it only after its own probes pass 3x in a row. Use an external probe from another host as the
+provider's per-IP block, so each burst still briefly affects the house. Pause BOTH watchers (pihole's and
+imac's `pihole-dot-failover.timer`) before any DNS burst test: the per-IP block covers the shared
+public IP, so a burst against either resolver benches both. Resume each only after its own
+UDP+TCP+random-name probes pass 3x in a row, and check both Pi-holes' `change of dns.upstreams`
+log lines before reporting how many pages went out. Use an external probe from another host as the
 control. Detail: the `reference_unbound_forwarder_benching` memory.
