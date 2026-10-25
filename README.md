@@ -198,7 +198,6 @@ plumbing that keeps them honest.
 
 - **postmark** — transactional email via Postmark's SMTP relay or HTTP API, including from
   non-Workers systems (Proxmox, cron jobs, backend services).
-- **find-skills** — discovering and installing skills based on a described capability gap.
 - **skill-development** — guidance for creating/improving Claude Code skills (structure,
   progressive disclosure, description quality).
 - **anthropic-admin-cost-api** — Anthropic Admin API access and the Usage & Cost API: minting an
