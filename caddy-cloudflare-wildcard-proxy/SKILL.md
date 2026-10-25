@@ -25,6 +25,12 @@ Swap `p=` for a different DNS provider module path, or chain multiple `&p=` para
 one plugin. Use `ansible.builtin.get_url` (or plain `curl`) straight to `/usr/local/bin/caddy`,
 mode `0755` — no build step needed on the target.
 
+**`get_url` with `force: true` re-downloads on every playbook run**, and the build server can
+return a different binary (a newer plugin, or a new Caddy release) with no version change on your
+side. `--check` always reports that task as changed. When a run is meant to change only the
+Caddyfile, compare `caddy version` with the latest release and use `--start-at-task "Deploy
+Caddyfile"`, then confirm the binary's checksum didn't move. Make upgrades a deliberate run.
+
 ## One wildcard cert covering many hostnames
 
 Put every internal hostname in a **single site block** keyed on the apex + wildcard, and route

@@ -149,6 +149,11 @@ the payload, not just "port 853 is being used"), then restore the primary and co
 revert. If the underlying host can reboot, do that too and confirm both services and the
 watcher's own state come back correctly rather than trusting a stale assumption.
 
+For a steady-state "is anything still in plaintext" check, capture egress for `port 53 and not net
+<LAN> and not net 100.64.0.0/10` for ~30 s. The control is a second capture of `dst port 853` on
+the same interface, which must show packets to the provider, or an empty first capture proves
+nothing. On 2026-10-25 both Pi-holes gave 0 plain packets against ~40 DoT packets to Quad9.
+
 ## Diagnosing a "DNSSEC validation looks broken" false alarm
 
 A health check that queries a deliberately-broken-signature test domain (`dnssec-failed.org`,
