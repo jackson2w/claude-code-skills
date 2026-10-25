@@ -217,3 +217,20 @@ homelab's `weekly-housekeeping-checks.sh` `pihole_dnssec_validation` check (fixe
   FORWARD path, so an nft `output` drop alone doesn't block it — add a `forward`-hook chain too. And
   don't name the chain `fwd`: it's a reserved word in nft ("syntax error, unexpected fwd").
 
+
+## Forwarding mode: one client's burst can bench the forwarders (2026-10-25)
+
+When Unbound forwards to a DoT provider (Quad9 here), a burst of slow, failing names from one
+client, such as a dnsleaktest.org run, makes Unbound block **every** forwarder per query type. It
+then SERVFAILs all uncached names in 0 ms while the provider is reachable, and the watcher fails
+over to stubby. That failover is correct. What's wrong is how long the block lasts: the default
+`infra-host-ttl` is 900 s, and the iMac was still stuck after 18 minutes. Set:
+```
+infra-host-ttl: 60
+infra-keep-probing: yes
+```
+Measured by replaying a 1,200-name burst: unaided recovery in 57 s (Unbound 1.26) and 72 s (1.22).
+`infra-keep-probing` alone did not fix it, because it only covers the "host down" case. To unstick
+by hand, run `unbound-control flush_infra all`. A leak test run during the block reports the
+fallback provider (Cloudflare) next to Quad9, which shows up as "WOODYNET" (AS42). Details in the
+`reference_unbound_forwarder_benching` memory.
