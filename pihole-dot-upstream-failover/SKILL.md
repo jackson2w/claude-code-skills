@@ -234,9 +234,13 @@ infra-keep-probing: yes # host-down case only; does not fix this on its own
 Even on 0, a two-resolver leak test (~2,300 names in 16 s) still trips about a 10 s block: what
 Quad9 reacts to is the failing-random-name pattern, not raw rate (the house's normal peaks reach
 118/s without any block). `unbound-control set_option` rejects 0, so set it in the config.
-Confirmed end to end by a third leak test: the report listed only Quad9, then both watchers failed
-over ~1 min *after* it and recovered unaided (one alert pair each). Treat that as the expected
-result of a leak test, not an incident. Don't add a "ignore failovers under a minute" debounce: it
+**Every leak test still trips the block and fails both watchers over for ~1 min** (one alert pair
+per Pi-hole, recovery unaided). Whether the *report* shows Cloudflare is a race. The test sends
+waves over ~15 s, and the watcher's 15 s timer flips the upstream partway through. Any wave after
+that goes to Cloudflare. Four tests on 10/25: Cloudflare 145 (retry 1, primary flipped 2 s before
+the last wave), 0 (retry 0, burst ended 5 s before the flip), 158 (retry 0, a final wave of 112
+landed 2 s after the flip). retry 0 did not change the outcome; the clean run was timing. Expect
+Quad9 plus sometimes Cloudflare, never the ISP, and treat either as a pass, not an incident. Don't add a "ignore failovers under a minute" debounce: it
 would also hide the first minute of a real outage.
 Ruled out: `infra-cache-min-rtt` (no help), a Pi-hole per-client rate limit (real devices burst to
 700-1,365/min), and an Unbound rate cap (normal peaks are above a leak test's per-resolver rate). Testing: a lab Unbound on another port isolates Unbound state, *not* the
