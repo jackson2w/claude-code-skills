@@ -234,6 +234,10 @@ infra-keep-probing: yes # host-down case only; does not fix this on its own
 Even on 0, a two-resolver leak test (~2,300 names in 16 s) still trips about a 10 s block: what
 Quad9 reacts to is the failing-random-name pattern, not raw rate (the house's normal peaks reach
 118/s without any block). `unbound-control set_option` rejects 0, so set it in the config.
+Confirmed end to end by a third leak test: the report listed only Quad9, then both watchers failed
+over ~1 min *after* it and recovered unaided (one alert pair each). Treat that as the expected
+result of a leak test, not an incident. Don't add a "ignore failovers under a minute" debounce: it
+would also hide the first minute of a real outage.
 Ruled out: `infra-cache-min-rtt` (no help), a Pi-hole per-client rate limit (real devices burst to
 700-1,365/min), and an Unbound rate cap (normal peaks are above a leak test's per-resolver rate). Testing: a lab Unbound on another port isolates Unbound state, *not* the
 provider's per-IP block, so each burst still briefly affects the house. Pause the watcher and resume
