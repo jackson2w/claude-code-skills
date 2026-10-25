@@ -207,6 +207,11 @@ plumbing that keeps them honest.
   figure.
 - **better-documents** — communication principles applied while generating a document, deck,
   memo, or proposal rather than reviewed in afterwards.
+- **clarity** — Addy Osmani's prose skill (`addyosmani/clarity`, MIT): review, rewrite, interview
+  (co-write from the author's own words) and lint modes, never inventing facts or anecdotes.
+  Vendored as a plain copy of upstream `e27ceef` (2026-10-25) after review, not via `npx skills`
+  (its `-g` install leaves a symlink into `~/.agents`, which dangles once synced). Update by
+  re-copying `SKILL.md`, `references/` and the two lint scripts.
 
 ## Hooks (not skills)
 
