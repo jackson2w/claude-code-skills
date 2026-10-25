@@ -227,12 +227,15 @@ re-asks each forwarder up to `outbound-msg-retry` (5) times, and the provider gi
 answer each time. The forwarders get benched (`tA 3`, `rto 120000` in `dump_infra`), every
 uncached name SERVFAILs in 0 ms, and the watcher fails over. Set, on every Unbound:
 ```
-outbound-msg-retry: 1   # the fix: 1,200-2,400-name bursts absorbed, no block, 0 failed probes
+outbound-msg-retry: 0   # 1 absorbed single-resolver bursts; 0 needed when a client hits both Pi-holes at once
 infra-host-ttl: 60      # backstop: a bench clears in ~1 min, not 15+ (the iMac was stuck 18 min)
 infra-keep-probing: yes # host-down case only; does not fix this on its own
 ```
-Ruled out: `infra-cache-min-rtt` (no help), and a Pi-hole per-client rate limit (real devices
-burst to 700-1,365/min). Testing: a lab Unbound on another port isolates Unbound state, *not* the
+Even on 0, a two-resolver leak test (~2,300 names in 16 s) still trips about a 10 s block: what
+Quad9 reacts to is the failing-random-name pattern, not raw rate (the house's normal peaks reach
+118/s without any block). `unbound-control set_option` rejects 0, so set it in the config.
+Ruled out: `infra-cache-min-rtt` (no help), a Pi-hole per-client rate limit (real devices burst to
+700-1,365/min), and an Unbound rate cap (normal peaks are above a leak test's per-resolver rate). Testing: a lab Unbound on another port isolates Unbound state, *not* the
 provider's per-IP block, so each burst still briefly affects the house. Pause the watcher and resume
 it only after its own probes pass 3x in a row. Use an external probe from another host as the
 control. Detail: the `reference_unbound_forwarder_benching` memory.
