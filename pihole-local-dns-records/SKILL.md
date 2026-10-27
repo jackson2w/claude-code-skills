@@ -261,6 +261,6 @@ networks:
         - subnet: 172.18.0.0/16   # pin the subnet Docker already chose, so existing addresses stay valid
 ```
 The record itself is `"172.18.0.2 imac-uptime-kuma"` in `pihole-dns-hosts.yml` on the primary, and
-nebula-sync copies it to the replica. A host-networked Pi-hole sees bridge containers by their bridge
+nebula-sync copies it to the replica (daily at 03:30 since 2026-10-27; the playbook restarts nebula-sync after a record change so it lands at once — a sync restarts the replica's FTL, which is why it is no longer hourly). A host-networked Pi-hole sees bridge containers by their bridge
 address, not as localhost, which is why the container showed up as a bare IP until it was named.
 Applying the pin recreates the containers. On a resolver host, pause its failover watcher first.
