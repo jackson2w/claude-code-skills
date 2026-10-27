@@ -481,7 +481,10 @@ cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible 
   `--auth-type passthrough` (no behaviour change), then probe as the agent user with its env:
   covered hosts 200, an unknown host 403. Deny applies only to traffic that goes through the
   proxy; anything that ignores `HTTPS_PROXY` and has open egress goes direct. Done for `hermes`
-  2026-10-27 after a week of watching unmatched hosts.
+  2026-10-27 after a week of watching unmatched hosts. **A week of traffic is not the full list:**
+  the same day it turned out Chuka's 3x/week gym-parking API (`ogr-api.offstreet.io`) never ran
+  while the watcher was up. Before switching, also read the agent's cron jobs and the skills they
+  load (`~/.hermes/cron/jobs.json`, the SKILL.md files they name) for every host they call.
 - **Coverage audit.** Traffic to a host that no service in the vault covers passes through
   untouched under the default policy. So "the agent's traffic goes through the proxy" does not
   mean "its keys are brokered". Compare `agent-vault vault service list --vault <v>` against the
