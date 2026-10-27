@@ -136,7 +136,8 @@ fi
 
 # ---- credentials (exit 6), held in variables only ----
 CREDS=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$ANSIBLE_CTRL" \
-  '/root/bin/infisical-get.sh CF_BROWSER_RUN_TOKEN && echo && /root/bin/infisical-get.sh CF_ACCOUNT_ID' 2>/dev/null) || CREDS=""
+  't=$(/root/bin/infisical-get.sh CF_BROWSER_RUN_TOKEN) && a=$(/root/bin/infisical-get.sh CF_ACCOUNT_ID) && printf "%s\n%s\n" "$t" "$a"' 2>/dev/null) || CREDS=""
+# $(...) strips each value's own trailing newline, so the token is always line 1 and the ID line 2.
 TOKEN=$(printf '%s\n' "$CREDS" | sed -n 1p | tr -d '[:space:]')
 ACCOUNT=$(printf '%s\n' "$CREDS" | sed -n 2p | tr -d '[:space:]')
 unset CREDS
@@ -157,6 +158,7 @@ set -e
 unset TOKEN
 MS=$(awk -F': *' 'tolower($1) == "x-browser-ms-used" { gsub(/\r/, "", $2); print $2 }' "$TMP/headers" 2>/dev/null | tail -1)
 MS=${MS:-0}
+MS=$(printf '%.0f' "$MS" 2>/dev/null || echo 0)   # Cloudflare sends a decimal, e.g. 7518.09
 
 if (( CURL_RC != 0 )); then
   ledger "$ACTION" "$HOST" "curl$CURL_RC" "$MS" 7

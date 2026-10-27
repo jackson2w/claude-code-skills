@@ -57,5 +57,8 @@ link on the page), `screenshot` (PNG, viewport 1280×900; add `--full-page` for 
   (renamed from Browser Rendering in April 2026). Body: `url`, `gotoOptions.waitUntil`
   (`networkidle2` here), `waitForSelector`, `screenshotOptions`, `viewport`.
 - Free plan: 10 browser-minutes a day, ~6 quick-action requests a minute, 3 concurrent browsers.
+- `X-Browser-Ms-Used` is a decimal (e.g. `7518.09`); the script rounds it.
+- Live-tested 2026-10-27: a Calendly page rendered (~7.5 s), a j2wtalent.com screenshot (~2 s), and
+  vultr.com's "Just a moment..." challenge returned exit 4 as designed.
 - The `/json` action is deliberately not wrapped: it runs a Workers AI model (a second cost and
   a second model); extract fields from the Markdown instead.
