@@ -473,6 +473,15 @@ cert for a consumer's trust bundle, read **only** `ca.crt.pem`, e.g. an Ansible 
   and can be revoked, which the standalone server's agent tokens can't. As of 10-11 Infisical
   labels it a preview and "not recommended for production". Don't follow its quickstart against
   the standalone server.
+- **Strict deny mode (`unmatched_host_policy`) has no CLI command in 0.40.0.** It is a web-UI
+  toggle ("Strict deny mode") backed by `GET`/`PATCH /v1/vaults/<vault>/settings` with
+  `{"unmatched_host_policy": "deny"|"passthrough"}`. From the server host, use the CLI's session
+  (`/root/.agent-vault/session.json`: `token`, `address`), passing the bearer header to curl on
+  stdin (`--config -`). Before switching, add every legitimate un-credentialed host as
+  `--auth-type passthrough` (no behaviour change), then probe as the agent user with its env:
+  covered hosts 200, an unknown host 403. Deny applies only to traffic that goes through the
+  proxy; anything that ignores `HTTPS_PROXY` and has open egress goes direct. Done for `hermes`
+  2026-10-27 after a week of watching unmatched hosts.
 - **Coverage audit.** Traffic to a host that no service in the vault covers passes through
   untouched under the default policy. So "the agent's traffic goes through the proxy" does not
   mean "its keys are brokered". Compare `agent-vault vault service list --vault <v>` against the
