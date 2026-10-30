@@ -213,6 +213,11 @@ hosts; the account was the errand, the finding was the value).
    the units are Condition-gated.
 6. The fleet's weekly-sweep exposure arrays (`LOOPBACK_ONLY`/`LAN_OK`) have no entry for a
    host with no listener at all; that's correct, same as the Ansible controller.
+7. Pinning GitHub's key from `ssh-keyscan` with `stdout_lines[0]` breaks trap 2's fix. The
+   first line is sometimes keyscan's `# github.com:22 SSH-2.0-<banner>` comment, and the banner
+   changes. The task then appended a new comment on most runs (9 found) and never re-ran clean,
+   which would hide a real host-key change. Select the `github.com ssh-ed25519 …` line itself
+   (homelab-ansible `f594983`, 2026-10-29).
 
 ## 7. Terminal access alongside Remote Control, and herdr
 
