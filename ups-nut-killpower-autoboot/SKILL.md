@@ -68,3 +68,6 @@ Two halves, and both must work. Either half alone leaves someone pressing a powe
   rebooted at about 17:00:20.
 - Shutdown took 3 min 20 s because the Home Assistant VM never answered ACPI and was killed at
   its 180 s timeout. It had no guest agent. Every other guest stopped in under 5 s.
+  Fix: enable the QEMU guest agent (`agent: 1`; HAOS ships qemu-ga). Apply it while the VM is
+  stopped: shut down from the guest UI, since the setting needs a full stop/start. `qm shutdown` then took 25 s.
+- Before trusting the shutdown budget, check every VM for an `agent:` line or a proven ACPI response.
