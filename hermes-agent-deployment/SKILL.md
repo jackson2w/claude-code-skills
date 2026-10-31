@@ -567,6 +567,34 @@ with a visible prefix such as `[script]`, is a cheap way to decide. When checkin
 name before create, avoid names that substring-match another job's (the create guard greps `cron
 list`).
 
+## Cutting a cron job's per-wake cost: trim its toolset (2026-10-30)
+
+**What a cron wake actually costs.** Every run is a fresh session (`cron_<job>_<timestamp>`,
+`history=0`; `scheduler.py` builds it new each time), so there is **no history replay**. The cost is
+API calls × the base prompt. The base is mostly tool schemas, and it is ~97–100% cached. On Chuka's
+`agent-exchange-poll` the monitor gated the model down to 168 wakes out of ~42,300 ticks, and the
+"~1.3M tokens/day" was ~35k base × calls per wake. Proposals to "summarise history" or "shorten the
+prompt" don't touch either factor.
+
+**The lever is a per-job `enabled_toolsets`.**
+- Each MCP server adds all of its tools to every call (Krisp 26 + n8n 12 + HEY 6 = 44 tools, plus 30
+  native ones).
+- A job that only reads files and writes one reply needs `[terminal, file, skills, memory, web,
+  no_mcp]`. The `no_mcp` sentinel drops every MCP server for that job only
+  (`_merge_mcp_into_per_job_toolsets`).
+- `hermes cron edit` has **no toolset flag**. Set it with `cron.jobs.update_job(job_id,
+  {"enabled_toolsets": [...]})` from the Hermes venv, as hermes-ansible
+  `hermes-agent-exchange-cron-install.yml` does, with an assert that reads the value back.
+- The scheduler re-reads `jobs.json` every tick, so no restart is needed.
+- Before changing anything, check every tool the job's prompt and skill call is still in the trimmed
+  set: an "Unknown tool" error mid-turn is the failure mode.
+
+**Measure offline:** `hermes prompt-size --platform cron --json` gives the base without MCP tools;
+add the MCP tool schemas yourself. Then confirm on the next real wake: call #1's input tokens should
+drop (35k → ≤20k expected here) and the reply should still land.
+**Control:** another job with MCP still on (here the gym jobs, ~26.7k at start) shows that the drop
+came from the trim, not from a quieter day.
+
 ## Telegram identity
 
 `getMe` against the live bot token returns `{"id": 8810663021, "username": "DFWHermesBot",
