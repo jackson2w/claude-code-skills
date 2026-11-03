@@ -809,3 +809,10 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
   they are PM's own Python and dependency trees, rebuilt by `pm install`, and the legacy layout being
   restored never used them. A restored tarball without them is complete; don't count them when sizing
   the backup.
+- **Before cutover, grep for anything that still runs the legacy venv's Python:** `grep -rIl
+  hermes-agent/venv` over `~hermes/.hermes/{bin,plugins,scripts}`, `config.yaml`, `/usr/local/bin`,
+  `/etc/systemd/system`. On 11-02 the hand-built STT provider (`~/.hermes/bin/hermes-stt-whisper`,
+  shebang `#!/usr/local/lib/hermes-agent/venv/bin/python`) was missed, so every voice transcription
+  failed afterwards with `exit 127 ... not found` (a missing interpreter, not a missing script). Its
+  faster-whisper lived in `stt-lib` built for that venv's 3.11. Fixed with its own pinned venv
+  (hermes-ansible `hermes-stt-install.yml`), so STT no longer depends on Hermes's Python at all.
