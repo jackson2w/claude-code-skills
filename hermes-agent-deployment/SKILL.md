@@ -764,3 +764,38 @@ Built-in MEMORY.md/USER.md stays on alongside. Checking `hermes memory status` a
 - **"Auxiliary approval: using ..." in agent.log** right before a `pending_approval` tool error means
   the BUILT-IN detector plus smart mode flagged a command, not a plugin. In a cron session it can
   never be approved.
+
+## v0.22+ (PM layout): moving off the legacy uv venv (rehearsed on a dfw twin, 2026-11-02)
+
+From the PM release on, every runtime dependency is gated `python_version >= '3.14'`, so
+`uv pip install -e .[all]` into an old 3.11–3.13 venv installs a Hermes that can't import. The supported
+path is `python -m pm.cli install` from the checkout. It puts a pinned Python 3.14 and tools under
+`HERMES_HOME/tools`, the dependency env under `HERMES_HOME/installs/<id>/environments/<gen>/venv`,
+and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migration.yml` /
+`hermes-pm-rollback.yml` do it end to end. Gotchas, every one hit on the twin:
+- `pm install --extra X` with **no names installs no tools**, then fails "tools not on PATH before venv
+  sync". Do a bare `pm install` first, then a second call with `--extra`.
+- **Extras the old install had are lazy now** (`telegram`, `edge-tts`, ...). Whatever isn't pre-installed
+  gets installed on first use as the service user, through egress firewall + Agent Vault, which blocks
+  PyPI. Diff the dist-info lists, old venv vs new env, and pre-install the extras (as root).
+- **Env generations:** every PM operation (an extras call, a catalog plugin install) can create a new
+  generation. Only `installs/*/facts.json` → `packages.venv.environment` says which is selected, and
+  `ls | tail -1` picked the oldest. Resolve it at call time; don't hard-code it.
+- Run PM as root when the checkout is root-owned (PM refuses cross-user mutation). Root runs leave
+  root-owned **lease files**, so the service user then gets "install state is not writable". Chown what
+  root created (find -newer marker) **after the last root `hermes` call**, not mid-play. Don't chown the
+  whole home: some root-only files are deliberate.
+- Ansible `async` + `environment: {HOME: ...}` loses the job ("could not find job"): the status file
+  goes under the overridden `$HOME`. Pass HOME via `env` in argv.
+- **Home Assistant left core** and is now a catalog plugin. `plugins install homeassistant` does NOT
+  enable it, so run `plugins enable`. Its adapter honours the proxy; tools.py's two
+  `aiohttp.ClientSession()` calls don't.
+- Regenerate the unit with the new release's `gateway install --system --run-as-user hermes --force`.
+  At start it checks its own unit and rewrites it if stale; `.service.d` drop-ins survive. Child
+  processes still get `python` = the selected env, because `activate_dependencies` prepends its bin dir
+  in-process (`/proc/<pid>/environ` won't show that).
+- The dashboard needs `hermes_cli/web_dist` rebuilt per release. Use `npm ci`: `npm install` rewrote
+  package-lock.json, leaving a dirty tree that the stability check flags.
+- Empty `state.db`: the first open fails "no such savepoint: fts_align_empty" (upstream bug on the
+  empty-DB branch) and the retry works. A DB with messages takes the rebuild path, which was clean at
+  15k messages / 194 MB.
