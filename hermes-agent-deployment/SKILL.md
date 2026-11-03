@@ -805,3 +805,7 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
   layout.**
 - Rollback must also delete `<checkout>/.hermes`: PM launchers are untracked, so a git checkout keeps
   them and any layout detection keyed on them misreads the rolled-back host as PM.
+- The migration backup (`hermes-home.tgz`) **leaves out `HERMES_HOME/tools` and `installs/` on purpose**:
+  they are PM's own Python and dependency trees, rebuilt by `pm install`, and the legacy layout being
+  restored never used them. A restored tarball without them is complete; don't count them when sizing
+  the backup.
