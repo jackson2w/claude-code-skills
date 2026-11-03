@@ -799,3 +799,9 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
 - Empty `state.db`: the first open fails "no such savepoint: fts_align_empty" (upstream bug on the
   empty-DB branch) and the retry works. A DB with messages takes the rebuild path, which was clean at
   15k messages / 194 MB.
+- **Live-only (hermes, after the twin passed):** the v0.22 web UI needs node ^22.22/^24.11/>=26.
+  Debian's node 20 fails EBADENGINE, so build with PM's node and npm from `HERMES_HOME/tools`. The twin
+  missed it because dfw has node 24: **a twin must match the host's system packages, not only its
+  layout.**
+- Rollback must also delete `<checkout>/.hermes`: PM launchers are untracked, so a git checkout keeps
+  them and any layout detection keyed on them misreads the rolled-back host as PM.

@@ -125,3 +125,10 @@ gotchas for the sibling issue with backticks/`$()` inside a double-quoted SSH ar
 `package-check-install.yml` are the concrete worked examples of grading a live subsystem into
 a playbook using exactly this discipline. See the `project_dfw_vultr_buildout` memory for the
 narrative and the `homelab-ansible/CATALOG.md` convention this was adapted from.
+
+## Gotcha: an apostrophe in a comment inside a `shell:` block breaks loading (2026-11-02)
+`# PM's own node` inside a `shell: |` block → "failed at splitting arguments, either an unbalanced
+jinja2 block or quotes". **`--syntax-check` passes it**; only a real run or `--check` loads the task
+args and fails. Keep apostrophes out of shell-block comments, and gate on `--check`, not `--syntax-check`.
+Related: under Ansible's `trim_blocks`, a `{% endif %}` at the end of a line inside a templated block
+eats the newline; use an inline `{{ x if cond else y }}` expression instead.
