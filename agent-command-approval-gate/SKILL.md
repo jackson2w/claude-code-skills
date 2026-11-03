@@ -283,11 +283,16 @@ itself.
 
 ## Hermes: what an "always" press actually covers (checked 2026-11-02)
 
-Plugin approvals don't share a key with the built-in patterns. `tools/approval.py` keys a plugin
-`{"action": "approve"}` as `plugin_rule:<rule_key>` when the hook gives one, and otherwise as
-`plugin_rule:<tool>:<sha256(message)[:12]>`. **Put the command text in the message and don't
-set a rule_key.** Then a "session" or "always" press covers only that exact call, never the
-whole class. A stable message, or a rule_key, turns one careless "always" into a permanent hole.
+Plugin approvals don't share a key with the built-in patterns. `tools/approval.py`'s
+`request_tool_approval` keys a plugin `{"action": "approve"}` as `plugin_rule:<rule_key>`, falling
+back to `plugin_rule:<tool>:<sha256(message)[:12]>` only when rule_key is empty. **But the caller
+never passes it empty**: `hermes_cli/plugins.py` calls it with `rule_key=details.rule_key or
+tool_name` (v0.20.6 and v0.22.5/6 alike; corrected 2026-11-02, this section first read only
+approval.py and was wrong). So a hook that returns no rule_key is keyed **`plugin_rule:terminal`**:
+one "session" press on any plugin-gated terminal call approves every plugin-gated terminal call
+in that session, across all plugins. **Return an explicit per-call rule_key**, e.g.
+`f"{plugin}:{sha256(command)[:12]}"`, so a press covers only that exact call. Read the caller,
+not just the callee.
 
 The built-in `execute_code` guard is different: it uses the fixed key `execute_code`, so one
 "always" press allowlists every script forever (`command_allowlist: [execute_code]` in
