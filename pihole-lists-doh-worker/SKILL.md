@@ -1,6 +1,6 @@
 ---
 name: pihole-lists-doh-worker
-description: This skill should be used when giving phones or tablets Pi-hole-style ad-blocking away from home without depending on a VPN/Tailscale tunnel. It covers serving Pi-hole's own lists as DNS-over-HTTPS from a Cloudflare Worker, iOS/iPadOS DNS-settings profiles (.mobileconfig) with SSID OnDemand rules, and the Worker's upstream (Quad9 over DoT via cloudflare:sockets). Built 2026-11-02 for Will (repo jackson2w/roaming-dns-worker, homelab-ansible roaming-dns.yml). Trigger phrases include "ad blocking on the go", "roaming DNS", "DoH Worker", "DNS over HTTPS cloudflare worker", "pihole lists cloudflare", "mobileconfig DNS profile", "com.apple.dnsSettings.managed", "OnDemandRules SSIDMatch", "iOS DNS profile not working", "Use Tailscale DNS settings", "Quad9 DoH 505", "HTTP Version Not Supported quad9", "cloudflare:sockets DoT", "error code 1010", "Python-urllib 403 workers.dev", "Workers Builds name mismatch", "npm install-scripts approve workerd", "roaming-dns-canary", "roaming-dns-sync".
+description: This skill should be used when giving phones or tablets Pi-hole-style ad-blocking away from home without depending on a VPN/Tailscale tunnel. It covers serving Pi-hole's own lists as DNS-over-HTTPS from a Cloudflare Worker, iOS/iPadOS DNS-settings profiles (.mobileconfig) with SSID OnDemand rules, and the Worker's upstream (Cloudflare's security resolver over DoH since 2026-11-03; Quad9 DoT before). Built 2026-11-02 for Will (repo jackson2w/roaming-dns-worker, homelab-ansible roaming-dns.yml). Trigger phrases include "ad blocking on the go", "roaming DNS", "DoH Worker", "DNS over HTTPS cloudflare worker", "pihole lists cloudflare", "mobileconfig DNS profile", "com.apple.dnsSettings.managed", "OnDemandRules SSIDMatch", "iOS DNS profile not working", "Use Tailscale DNS settings", "Quad9 DoH 505", "HTTP Version Not Supported quad9", "cloudflare:sockets DoT", "error code 1010", "security.cloudflare-dns.com", "connect to 1.1.1.1 from worker", "Stream was cancelled", "Python-urllib 403 workers.dev", "Workers Builds name mismatch", "npm install-scripts approve workerd", "roaming-dns-canary", "roaming-dns-sync".
 ---
 
 # Pi-hole's lists as a DoH Worker (ad-blocking that survives tunnel stalls)
@@ -12,7 +12,7 @@ keeps **Pi-hole as the only place lists are edited**.
 ## Shape
 
 ```
-iPhone/iPad --iOS DNS profile (DoH)--> Cloudflare Worker --DoT 853--> Quad9
+iPhone/iPad --iOS DNS profile (DoH)--> Cloudflare Worker --DoH (fetch)--> security.cloudflare-dns.com
                                          lists bundled in the Worker, committed nightly by the control node
 home Wi-Fi: profile OFF by SSID rule --> Pi-hole on the LAN as before
 ```
@@ -41,6 +41,8 @@ home Wi-Fi: profile OFF by SSID rule --> Pi-hole on the LAN as before
 | Symptom | Cause / fix |
 |---|---|
 | Quad9 DoH returns **505 HTTP Version Not Supported** | Quad9 has been **HTTP/2-only** for DoH since 2025-12-15 (port 5053 retired in May 2025). Worker `fetch()` to an outside server can't be relied on for h2. **Use DoT through `connect()` from `cloudflare:sockets`** (`secureTransport:"on"`, 2-byte length framing). Same upstream and protocol as Unbound. |
+| Which upstream from a Worker? | **Benchmark from inside the Worker, not from a laptop.** DFW, 2026-11-03: Quad9 DoT p50 17 ms (a new TLS connection per query; a Worker can't keep a socket open between requests), Cloudflare DoH by `fetch()` p50 2 ms (same building), Quad9 DoH by `fetch()` 26–31 ms cold, 6 ms warm, with almost no reuse across requests. A Cloudflare upstream must be DoH: `connect()` to 1.1.1.1:853 fails with "Stream was cancelled" (sockets can't reach Cloudflare IPs). Privacy angle: the external resolver sees only the Worker's egress IP, so it adds a party seeing names without hiding the user's IP. |
+| Live-test DNSSEC and upstream blocking | AD only comes back when the query sets **DO** (RFC 6840 §5.7): a plain query shows ad=0 on any resolver. Use `dnssec-failed.org` (expect SERVFAIL) and, for Cloudflare's security resolver, `malware.testcategory.com` (expect 0.0.0.0). Run the new suite against the **old** upstream first as a control. After a switch, cached answers from the old upstream last until their TTL plus one serve-stale refresh. |
 | Upstream fails in `wrangler dev` but production is fine | The home LAN blocks outbound **853** for everything but Pi-hole (UniFi §6a). Prove forwarding against the deployed Worker. |
 | Every request returns **403, "error code: 1010"** from a script, but curl works | Cloudflare's bot check rejects **Python-urllib's default User-Agent**. Set your own User-Agent in tests and the canary. iOS clients are unaffected. |
 | `wrangler dev` won't start after `npm install` | npm 11 holds install scripts. Run `npm install-scripts approve workerd` then `npm rebuild workerd`. Pin wrangler to an exact version at least 2 weeks old. |
