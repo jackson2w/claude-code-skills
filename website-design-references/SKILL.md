@@ -94,3 +94,16 @@ header). `::selection` is accent-on-paper.
 3. Warm paper + ink palette with one blue accent, and a real dark mode.
 4. Small-caps eyebrows, drop cap, italic voice words, hairline rules instead of boxes.
 5. Grain and ink-wipe hover, only if the site is a reading site; skip the pulse and load animations for tools/dashboards.
+
+
+## Abernathy "Broadside" (2026-11-04): the Black press, from sources
+
+Will picked this direction for abernathymagazine.com. Source facts (Wikipedia, MFA Boston, Fonts In Use,
+People's Graphic Design Archive): Emory Douglas art-directed *The Black Panther* newspaper (1967 to about 1980),
+covers in **black plus one colour** with high-contrast photographs, laid out by **cut-and-paste** with rub-down type.
+What the mockup took from it: hard offset "paste-up" shadows (no blur) cycling red/ink/green; one duotone (grey
+photo multiplied onto red) for the lead; a newspaper dateline between a 4px and a 1px rule; section heads as ink
+banners with a swallowtail notch (`clip-path`); a tilted rubber-stamp caption with a dashed inner outline; the
+wordmark printed slightly off-register (`text-shadow: .035em .025em 0 red`); a 5px double-rule box for curated
+lists. Other directions mocked and not picked: Margins (Paris Review / Tufte: book spine, ribbon, contents page)
+and Full Bleed (Businessweek / NYT Magazine / The Pudding: colour fields, duotones that return to colour on hover).
