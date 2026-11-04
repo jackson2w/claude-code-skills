@@ -1,6 +1,6 @@
 ---
 name: home-assistant
-description: This skill should be used when configuring, troubleshooting, or extending a Home Assistant OS (HAOS) instance — installing add-ons/apps, editing configuration.yaml, setting up Tailscale/remote access, or troubleshooting onboarding, the Supervisor, or backups. Trigger phrases include "Home Assistant add-on", "Home Assistant apps", "configuration.yaml", "HAOS", "Home Assistant Tailscale", "Supervisor", "HACS".
+description: This skill should be used when configuring, troubleshooting, or extending a Home Assistant OS (HAOS) instance — installing add-ons/apps, editing configuration.yaml, setting up Tailscale/remote access, or troubleshooting onboarding, the Supervisor, or backups, or building automations/scripts/helpers/template switches/webhooks through HA's REST and websocket APIs. Trigger phrases include "Home Assistant add-on", "Home Assistant apps", "configuration.yaml", "HAOS", "Home Assistant Tailscale", "Supervisor", "HACS", "home assistant api", "create automation via api", "/api/config/automation/config", "input_boolean/create", "timer/create", "home assistant websocket", "template switch config flow", "webhook local_only", "ios shortcut webhook", "template value should be a string", "pause for 1 hour then revert".
 ---
 
 # Home Assistant OS (HAOS)
@@ -125,3 +125,55 @@ gotcha: **a `qmrestore` to a throwaway VMID preserves the original guest's MAC a
 it alongside the still-running original puts two VMs on the same LAN segment with an identical
 MAC. Strip it first: `qm set <throwaway-vmid> --net0 virtio,bridge=vmbr0` (omit the MAC) so
 Proxmox generates a fresh one before starting the throwaway copy.
+
+## Building automations, scripts and helpers through the API (no UI clicking)
+
+Proven 2026-10-31 and 2026-11-04 building the Proton VPN controls (Colorado toggle, per-device
+1 h VPN-off switches) entirely from `ansible-ctrl` with a long-lived token. The UI is only needed
+to make that token.
+
+- **Automations and scripts are plain REST.** `GET|POST /api/config/automation/config/<id>` and
+  `/api/config/script/config/<id>` read and create/replace the whole config (the automation body
+  carries its own `"id"`). It's live as soon as the POST returns, with no reload. Keep a `GET` copy
+  before replacing anything.
+- **Nested templates are rejected.** Writing `{{ … }}` inside another `{{ … }}` fails with `400
+  template value should be a string`. Join the pieces with `~` inside a single template instead.
+- **Helpers (`input_boolean`, `timer`, …) can't be made over REST.** Use the websocket API:
+  `{"type":"input_boolean/create","name":…}`, `{"type":"timer/create","name":…,"duration":"01:00:00","restore":true}`,
+  `…/list`. The entity_id is the slugified name. If no websocket library is installed, ~50 lines of
+  stdlib Python does it: a `socket` handshake to `/api/websocket`, masked text frames, `auth` →
+  `auth_ok`, then one command per `id`.
+- **Template switches are config-flow helpers.** `POST /api/config/config_entries/flow`
+  `{"handler":"template"}` → `POST …/flow/<flow_id>` `{"next_step_id":"switch"}` → `POST …/flow/<flow_id>`
+  `{"name","value_template","turn_on":[…],"turn_off":[…]}` returns `create_entry`. To edit one later,
+  use `/api/config/config_entries/options/flow` with its entry_id.
+- **Webhook triggers with `local_only: true` reject requests that arrive through a reverse proxy
+  or Tailscale Serve,** because the source is a tailnet address. Call the LAN IP on port 80 (HAOS
+  serves its UI there). Parse the body defensively:
+  `trigger.json if trigger.json is defined and trigger.json is mapping else {}`. An Apple Shortcut
+  "Get Contents of URL" set to POST with an empty JSON body arrives as `{}`, so a "no body =
+  toggle" design works from both iOS and macOS Shortcuts. The HA iOS app's Shortcuts entity picker
+  is unreliable (it offered only lights), so use a webhook.
+- **`timer.start` with a `duration` override applies to that one run only.** The next start
+  without a duration uses the configured length again (verified). So you can drill a 1 h revert in
+  20 s without touching the helper.
+
+### Patterns that held up
+- **Switch between two outputs make-before-break.** Turn the target on, wait, then turn the other
+  off, so the device is never on zero routes. Every run enables before it disables, which keeps
+  `mode: restart` safe under rapid taps.
+- **A template switch's state should reflect the intent, not raw entity state, when another actor
+  can also move that raw state.** For example, `switch.iphone_vpn` = `input_boolean.iphone_vpn_paused`
+  off, not "a route is on", because a failover watcher may turn routes off.
+- **A timed pause:** a boolean holds the intent and a `timer` with `restore: true` does the
+  revert. A resume automation fires on `timer.finished`, plus a backstop trigger (boolean on for
+  duration + 2 min) and HA start with the boolean on and the timer idle. Resume clears the boolean
+  **last**, after the route is back on.
+- **Gate a safety-net automation with a condition, don't pause it.** When an outside watcher also
+  pauses and resumes the same automation, two actors toggling its enabled state will eventually
+  undo each other. A `condition: state <pause boolean> off` can't race anything.
+- Use `mode: queued` for short set/unset scripts whose runs must not interleave.
+- **The UniFi integration sees route changes made outside HA about 10 s late** (it polls). Its own
+  changes show instantly. Size any `for:` guard with that lag in mind.
+- When a toggle "doesn't work", read the logbook first. A raw entity change shows no
+  `script.<x> started` line, which means the user hit the wrong entity, not that the script failed.
