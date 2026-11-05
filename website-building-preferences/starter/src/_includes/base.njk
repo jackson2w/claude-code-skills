@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="{{ site.lang }}">
+<head>
+{% include "head.njk" %}
+  <link rel="stylesheet" href="{{ '/css/grt.css' | fp }}">
+  <link rel="stylesheet" href="{{ '/css/style.css' | fp }}">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header data-pagefind-ignore>{% include "nav.njk" ignore missing %}</header>
+<main id="main">
+{{ content | safe }}
+</main>
+<footer data-pagefind-ignore>{% include "footer.njk" ignore missing %}</footer>
+</body>
+</html>

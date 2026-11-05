@@ -8,16 +8,18 @@ description: >-
   notes (williejackson.com, abernathymagazine.com, photos.jackson2w.com). Load BEFORE any website,
   landing page, redesign, migration, 11ty, GRT, typography, palette or Cloudflare Pages work for Will.
   Trigger phrases: "build me a website", "new site", "landing page", "redesign", "migrate from
-  WordPress", "11ty", "eleventy", "golden ratio typography", "GRT", "grt.py", "palette", "font pairing".
+  WordPress", "11ty", "eleventy", "golden ratio typography", "GRT", "grt.py", "palette", "font pairing",
+  "open graph", "og:image", "social preview", "lighthouse", "security headers", "CSP", "robots.txt",
+  "favicon", "structured data", "llms.txt", "specification.website", "site audit", "launch checklist".
 ---
 
 # Website-building preferences (Will)
 
 ## Local notes (read first; these amend the document below)
 
-- **Caching is HELD (Will, 2026-10-23).** Don't add immutable `Cache-Control` rules, CSS fingerprinting
-  or rename-on-change image rules from §10 until Will lifts the hold: during iteration they keep old
-  files cached and make updates hard to see. Security headers on `/*` are fine.
+- **Caching is off until each site's launch (Will, 2026-10-23; refined 2026-11-05).** Mockups and previews stay
+  uncached so changes show up at once. The starter's generated `_headers` turns immutable caching on when
+  `site.launched` is true, with CSS fingerprinted by the `fp` filter (§10, §15). Security headers on `/*` are always on.
 - **Install:** this file is the global copy (synced via the skills repo). `grt.py` lives next to it and
   is symlinked at `~/.claude/tools/grt.py`. Each site repo also carries a `CLAUDE.md` with its own
   §13 entry; the repo file wins.
@@ -59,6 +61,10 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
 6. **Hand-written CSS. Vanilla JS. 11ty.** No Tailwind, no CSS or animation frameworks, no SPA frameworks, and don't propose switching to Astro.
 7. **Confirm before deploying to production**, unless a project file says otherwise.
 8. **Never commit or embed secrets.** That includes tokens in git remote URLs.
+9. **Ship standard = specification.website (Will, 2026-11-05).** Every Required item and every Recommended item
+   that applies, built in from day one via `starter/` (§15) and **proven with `starter/scripts/site-audit.py`
+   against the deployed site** before any site is called done. Lighthouse targets: Accessibility, Best Practices,
+   SEO and Agentic Browsing 100, Performance ≥ 95 (SEO is legitimately lower on a noindexed preview).
 
 ---
 
@@ -214,10 +220,22 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
   `reference_lighthouse_on_claude_code_host` (the PSI API needs a key)
 
 ## 9. SEO and sharing
-- Every page: description (150–160 chars), canonical, OG title/description/url/type (`article` for posts), `og:image` at 1200×630.
-- **Use JPG or PNG for `og:image`**, not WebP. Support for WebP in social previews is inconsistent, and Will cross-posts to LinkedIn.
-- JSON-LD `@graph` with `@id` cross-links: Person ("Willie Jackson"), WebSite, BlogPosting, BreadcrumbList. Use `eleventy-plugin-jackson-seo` if it's installed instead of hand-rolling.
-- Sitemap and robots.txt generated at build time. `llms.txt` is low priority, so skip it unless asked.
+- Every page: description (150–160 chars), canonical (absolute), and the full share set: `og:site_name`, `og:type`
+  (`article` for posts), `og:title`, `og:description`, `og:url` (= canonical), `og:image` + `og:image:type`/`width`/
+  `height`/`alt`, `twitter:card = summary_large_image`. All URLs **absolute**. `starter/src/_includes/head.njk` does it.
+- **`og:image` is a 1200×630 JPG** (not WebP: support is inconsistent and Will cross-posts to LinkedIn), cropped on
+  purpose with `starter/scripts/og-crop.cjs` and looked at. Site default plus a per-page `ogImage` (each post uses its
+  own photo). Without OG tags, Messages/LinkedIn pick an image themselves (Abernathy's preview showed the wrong
+  photo, 2026-11-05). Share images are exempt from `Cross-Origin-Resource-Policy: same-site`.
+- JSON-LD `@graph` with `@id` cross-links: Person ("Willie Jackson") or Organization, WebSite, BlogPosting,
+  WebPage/CollectionPage, BreadcrumbList (`starter/src/_includes/jsonld.njk`). Use `eleventy-plugin-jackson-seo`
+  instead if it's installed and covers the same ground.
+- Generated at build time: sitemap.xml, robots.txt (AI policy below), **llms.txt** (Recommended by the spec; it was
+  "skip unless asked" before 2026-11-05), an Atom feed with `<link rel="alternate">` on sites that publish posts.
+- **AI crawlers (Will, 2026-11-05):** allow AI search and answers (OAI-SearchBot, ChatGPT-User, Claude-SearchBot,
+  Claude-User, PerplexityBot), block training (GPTBot, ClaudeBot, Google-Extended, Applebot-Extended, CCBot, …), plus
+  `Content-Signal: search=yes, ai-input=yes, ai-train=no`.
+- No `security.txt` (Will skipped it 2026-11-05: no contact address to publish).
 
 ## 10. Performance
 
@@ -233,24 +251,21 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
 - Fingerprint CSS URLs (a content-hash query string via an 11ty filter) so the immutable cache rule is safe.
 - Every `<script>` gets `defer` or `async`. Zero JS is the target for content pages.
 
-### `public/_headers`
-Cloudflare **joins duplicate headers with commas** when several rules match, so never put `Cache-Control` on `/*`. Security headers go on `/*` and cache headers go on asset paths only:
-
-```
-/*
-  X-Content-Type-Options: nosniff
-  X-Frame-Options: SAMEORIGIN
-  Referrer-Policy: strict-origin-when-cross-origin
-
-/css/*
-  Cache-Control: public, max-age=31536000, immutable
-/images/*
-  Cache-Control: public, max-age=31536000, immutable
-/fonts/*
-  Cache-Control: public, max-age=31536000, immutable
-/pagefind/*
-  Cache-Control: public, max-age=31536000, immutable
-```
+### `_headers` (generated: `starter/src/_headers.njk`)
+Cloudflare **joins duplicate headers with commas** when several rules match, so never put `Cache-Control` on `/*`,
+and detach an inherited header with `! Name` before overriding it on a sub-path. Security headers go on `/*` and
+cache headers on asset paths only. The set (Will's decisions 2026-11-05):
+- `Strict-Transport-Security: max-age=63072000` (**no `includeSubDomains`/`preload` by default**: they're hard to undo
+  across a whole domain, so they're a per-domain decision for Will)
+- `Content-Security-Policy: default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self';
+  font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self';
+  frame-ancestors 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'` (so: no inline scripts or
+  `style=""`; each third party is added deliberately and tested on a branch deploy first)
+- `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()`,
+  `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-site` (share images: `cross-origin`)
+- **Caching stays off until launch** (Will, 2026-11-05, refining the 10-23 hold): `site.launched` turns on immutable
+  caching for `/css/*` (fingerprinted by the `fp` filter), `/fonts/*`, `/img/*`. Never `X-XSS-Protection` (spec: avoid).
 (A `/*.html` rule does not match 11ty's pretty URLs like `/about/`, so don't use one.)
 
 ### Pre-deploy Core Web Vitals check
@@ -261,6 +276,7 @@ Cloudflare **joins duplicate headers with commas** when several rules match, so 
 - [ ] No render-blocking scripts
 - [ ] Heading hierarchy is clean
 - [ ] Playwright screenshots reviewed at ~390px and ~1280px
+- [ ] `site-audit.py` on the deployed preview: 0 FAIL (§15)
 
 ---
 
@@ -299,6 +315,10 @@ Check:       <URLs to eyeball>
 - **photos.jackson2w.com.** Photo pipeline: AVIF, Display-P3, blur-up LQIP, EXIF extraction via prepare scripts.
 
 ## 14. Decisions log (where older skill notes were superseded)
+- `llms.txt` "low priority, skip unless asked" → **built by default** (specification.website Recommended, 2026-11-05).
+- `X-Frame-Options: SAMEORIGIN` alone → **CSP `frame-ancestors 'none'` + `X-Frame-Options: DENY`**, plus HSTS, CSP,
+  Permissions-Policy, COOP/CORP (2026-11-05).
+- A hand-maintained `public/_headers` → **generated from `site.launched`**, one launch switch (2026-11-05).
 - WebP-only at quality 85 → **AVIF + WebP fallback** (matches the newer photo pipeline).
 - Hex color tokens → **OKLCH, proposed per site**.
 - Static px GRT → **GRT + Utopia fluid, in rem**.
@@ -308,3 +328,29 @@ Check:       <URLs to eyeball>
 - The `_headers` `/*.html` rule plus HTML Cache-Control → **security headers on `/*`, cache rules on assets only**.
 - `grt.css` both linked and `@import`ed → **linked only**.
 - `wordpress-export-to-markdown` → **`@11ty/import` preferred**.
+
+## 15. Ship standard: specification.website (adopted 2026-11-05)
+
+Will: "I want these preferences around semantic markup and web performance and Google Lighthouse scores and open
+graph tags to be built into all the websites that you build for me." The bar is **specification.website**
+(Joost de Valk; 178 topics, each Required / Recommended / Optional / Avoid; CC BY 4.0). Use the
+`specification-website` skill to look items up (it also has the MCP endpoint and the per-page `.md` URLs).
+
+- **Build it in, don't bolt it on:** start every site from `starter/` (README there). It already covers the
+  foundations, SEO, sharing, structured data, security headers, agent readiness (llms.txt, robots AI policy,
+  Content-Signal), resilience (real 404, manifest) and performance (speculation rules, fingerprinted CSS, caching at
+  launch) items that apply to a static 11ty site on Cloudflare Pages. §2–§10 still govern the design and the rest.
+- **Prove it:** `python3 starter/scripts/site-audit.py <deployed url> [--preview]` checks the deployed site (headers
+  and status codes only exist there) and exits 1 on any FAIL. It was checked both ways on 2026-11-05:
+  specification.website itself scored 0 FAIL, and the live WordPress abernathymagazine.com scored 7 real FAILs.
+  Then Lighthouse on every template (§8).
+- **Out of scope for static sites unless the site needs them:** cookie consent (no cookies), forms and
+  authentication items (unless the site has forms), i18n/hreflang (English-only sites), WebAuthn/OAuth well-knowns,
+  MCP/A2A/commerce agent protocols. Markdown source endpoints (`/page.md`) are worth adding on content-heavy sites (a
+  magazine): decide per site.
+- **Things only Will supplies, at launch:** the privacy page wording (Required: controller, contact, data, retention,
+  rights, date), any `includeSubDomains`/`preload` for HSTS, a security.txt contact if he ever wants one.
+- **Staying current:** the spec changes often (agent readiness especially). Monthly, read
+  `https://specification.website/changelog/rss.xml` since the last check (date in the follow-up) and update
+  `starter/`, this section and `site-audit.py` for any new or promoted item. Last checked: 2026-11-05.
+

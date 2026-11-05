@@ -1,0 +1,16 @@
+---
+permalink: /llms.txt
+eleventyExcludeFromCollections: true
+---
+# {{ site.name }}
+
+> {{ site.description }}
+
+{% if collections.posts and collections.posts.length %}## Posts
+
+{% for p in collections.posts | reverse %}- [{{ p.data.title }}]({{ site.url }}{{ p.url }}): {{ p.data.description }}
+{% endfor %}
+{% endif %}## Pages
+
+{% for p in collections.all %}{% if p.data.title and p.url and not p.data.noindex and p.url != "/404.html" and not ("posts" in (p.data.tags or [])) %}- [{{ p.data.title }}]({{ site.url }}{{ p.url }}): {{ p.data.description }}
+{% endif %}{% endfor %}

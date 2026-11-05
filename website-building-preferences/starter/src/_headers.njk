@@ -1,0 +1,37 @@
+---
+permalink: /_headers
+eleventyExcludeFromCollections: true
+---
+# Generated from src/_headers.njk: site.launched (src/_data/site.js) is the one launch switch.
+# specification.website security headers (Will's decisions 2026-11-05). Cloudflare JOINS duplicate headers from
+# overlapping rules with commas, so each header lives in exactly one matching rule (or is detached with "! Name").
+/*
+  Strict-Transport-Security: max-age=63072000
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-site
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+{%- if not site.launched %}
+  X-Robots-Tag: noindex, nofollow
+{%- endif %}
+
+# Share images must load on LinkedIn, X, Messages etc.
+/img/og/*
+  ! Cross-Origin-Resource-Policy
+  Cross-Origin-Resource-Policy: cross-origin
+{%- if site.launched %}
+
+# Caching (held until launch, Will 2026-11-05). CSS URLs carry a content hash (the | fp filter), so immutable is safe.
+# Images and fonts: never replace a file in place under the same name; rename it (preferences §10).
+/css/*
+  Cache-Control: public, max-age=31536000, immutable
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+/img/*
+  Cache-Control: public, max-age=31536000, immutable
+/icons/*
+  Cache-Control: public, max-age=86400
+{%- endif %}

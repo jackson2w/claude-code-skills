@@ -1,0 +1,13 @@
+---
+layout: base.njk
+permalink: /404.html
+title: Page not found
+description: "There is no page at this address. It may have moved; the homepage and search can help you find it."
+noindex: true
+eleventyExcludeFromCollections: true
+---
+{#- Cloudflare Pages serves /404.html with a real 404 status for any missing path (resilience/error-pages; never a soft 404).
+    Use the site's normal layout so the reader keeps the header, navigation and footer. -#}
+<h1>Page not found</h1>
+<p>There's nothing at this address. It may have moved.</p>
+<p><a href="/">Go to the homepage</a></p>

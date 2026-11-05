@@ -1,0 +1,25 @@
+---
+permalink: /robots.txt
+eleventyExcludeFromCollections: true
+---
+{%- if not site.launched -%}
+# Pre-launch preview: keep everything out of every index.
+User-agent: *
+Disallow: /
+{%- else -%}
+# AI policy (Will, 2026-11-05): AI search and answers may read and cite this site; model training may not.
+# specification.website agent-readiness/robots-for-ai-crawlers + content-signals
+{%- for bot in ["GPTBot", "ClaudeBot", "Google-Extended", "Applebot-Extended", "CCBot", "meta-externalagent", "Bytespider"] %}
+User-agent: {{ bot }}
+Disallow: /
+{% endfor %}
+{%- for bot in ["OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User"] %}
+User-agent: {{ bot }}
+Allow: /
+{% endfor %}
+User-agent: *
+Allow: /
+Content-Signal: search={{ site.ai.search }}, ai-input={{ site.ai.aiInput }}, ai-train={{ site.ai.aiTrain }}
+
+Sitemap: {{ site.url }}/sitemap.xml
+{%- endif %}

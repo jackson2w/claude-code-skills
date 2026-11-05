@@ -1,0 +1,41 @@
+{#- The <head> every page gets: specification.website foundations + SEO + agent readiness.
+    Page front matter: title (required), description (required), ogImage, ogImageAlt, ogType ("article" for posts),
+    ldKind ("home" | "post" | "collection"), date, breadcrumbs ([{name, url}], excluding home), noindex. -#}
+{%- set canonical = site.url + page.url -%}
+{%- set fullTitle = title if (page.url == "/") else (title + " · " + site.name) -%}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ fullTitle }}</title>
+  <meta name="description" content="{{ description }}">
+  <link rel="canonical" href="{{ canonical }}">
+  {%- if not site.launched or noindex %}
+  <meta name="robots" content="noindex, nofollow">
+  {%- endif %}
+  <meta name="theme-color" content="{{ site.themeColor }}">
+  <meta name="color-scheme" content="{{ site.colorScheme }}">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  {%- if site.feed %}
+  <link rel="alternate" type="application/atom+xml" title="{{ site.name }}" href="{{ site.feed }}">
+  {%- endif %}
+  <meta property="og:site_name" content="{{ site.name }}">
+  <meta property="og:locale" content="{{ site.locale }}">
+  <meta property="og:type" content="{{ ogType or 'website' }}">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ canonical }}">
+  <meta property="og:image" content="{{ site.url }}{{ ogImage or site.ogImage }}">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="{{ ogImageAlt or site.ogImageAlt }}">
+  {%- if ogType == "article" and date %}
+  <meta property="article:published_time" content="{{ date | dateToRfc3339 }}">
+  {%- endif %}
+  <meta name="twitter:card" content="summary_large_image">
+  {% include "jsonld.njk" %}
+  {#- Prefetch a page when the reader hovers or presses on a link to it (performance/speculation-rules).
+      The CSP needs 'inline-speculation-rules' for this one inline script. #}
+  <script type="speculationrules">{"prefetch": [{"where": {"href_matches": "/*"}, "eagerness": "moderate"}]}</script>
