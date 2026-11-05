@@ -1,0 +1,19 @@
+/* starter.css: performance and perceived-speed defaults (website-building-preferences §10, §15). Link it before style.css. */
+
+/* Pages cross-fade instead of flashing white between navigations (performance/view-transitions). Only for readers
+   who haven't asked for reduced motion; browsers without support just navigate normally. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
+
+/* No sideways jump when a page gains a scrollbar (performance/scrollbar-gutter). */
+:root { scrollbar-gutter: stable; }
+
+img, picture, svg, video { max-width: 100%; height: auto; }
+/* While a photo downloads, its reserved box shows a calm tint instead of nothing (the box itself comes from the
+   width/height eleventy-img writes, so nothing shifts). Override --img-placeholder per site. */
+picture img { background-color: var(--img-placeholder, oklch(0.93 0.005 85)); }
+
+/* Long lists: the browser skips layout and paint for rows that are off screen until the reader scrolls near them
+   (performance/css-containment). Put .cv-auto on each repeated row or card; set --cv-size to its typical height. */
+.cv-auto { content-visibility: auto; contain-intrinsic-size: auto var(--cv-size, 12rem); }

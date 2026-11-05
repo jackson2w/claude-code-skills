@@ -8,6 +8,9 @@
   <title>{{ fullTitle }}</title>
   <meta name="description" content="{{ description }}">
   <link rel="canonical" href="{{ canonical }}">
+  {%- for f in site.fonts %}{% if f.preload and fontAssets[f.file] %}
+  <link rel="preload" href="{{ fontAssets[f.file] }}" as="font" type="font/woff2" crossorigin>
+  {%- endif %}{% endfor %}
   {%- if not site.launched or noindex %}
   <meta name="robots" content="noindex, nofollow">
   {%- endif %}
@@ -36,6 +39,11 @@
   {%- endif %}
   <meta name="twitter:card" content="summary_large_image">
   {% include "jsonld.njk" %}
-  {#- Prefetch a page when the reader hovers or presses on a link to it (performance/speculation-rules).
-      The CSP needs 'inline-speculation-rules' for this one inline script. #}
-  <script type="speculationrules">{"prefetch": [{"where": {"href_matches": "/*"}, "eagerness": "moderate"}]}</script>
+  {#- Prerender a page when the reader hovers over (or starts to tap) a link to it, so the click lands on a page that is
+      already built (performance/speculation-rules). Chrome keeps at most two such pages; other browsers ignore this.
+      Mark links that must not run early (logout, side effects) with class="no-prerender". The CSP allows this one
+      inline script through 'inline-speculation-rules'. #}
+  <script type="speculationrules">{"prerender": [{"where": {"and": [{"href_matches": "/*"}, {"not": {"href_matches": "/*.(xml|txt|pdf|json|webmanifest)"}}, {"not": {"selector_matches": ".no-prerender, [download], [rel~=nofollow]"}}]}, "eagerness": "moderate"}]}</script>
+  {%- if site.analyticsToken and site.launched %}
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "{{ site.analyticsToken }}"}'></script>
+  {%- endif %}

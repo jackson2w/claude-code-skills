@@ -7,7 +7,8 @@ eleventyExcludeFromCollections: true
 # overlapping rules with commas, so each header lives in exactly one matching rule (or is detached with "! Name").
 /*
   Strict-Transport-Security: max-age=63072000
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'
+{%- set cfa = site.analyticsToken and site.launched %}
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'inline-speculation-rules'{% if cfa %} https://static.cloudflareinsights.com{% endif %}; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'{% if cfa %} https://cloudflareinsights.com{% endif %}; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-site

@@ -196,6 +196,10 @@ def audit_page(url, preview):
     L("PASS" if not noalt else "FAIL", "accessibility/image-alt-text", f"{len(p.imgs)} img, {len(noalt)} without alt {noalt[:3]}")
     nodim = [i.get("src", "?")[-40:] for i in p.imgs if not (i.get("width") and i.get("height"))]
     L("PASS" if not nodim else "WARN", "performance/core-web-vitals", f"{len(nodim)} img without width/height {nodim[:3]}")
+    modern = len(re.findall(r'<source[^>]+type="image/(?:avif|webp)"', html)) + sum(1 for i in p.imgs if re.search(r"\.(avif|webp)(\?|$)", i.get("src", "")))
+    photos = [i for i in p.imgs if re.search(r"\.(jpe?g|png)(\?|$)", i.get("src", ""), re.I)]
+    if photos and not modern: L("WARN", "performance/image-optimization", f"{len(photos)} JPG/PNG img with no AVIF/WebP source (use the eleventy-img transform)")
+    elif p.imgs: L("PASS", "performance/image-optimization", f"AVIF/WebP sources present ({modern})")
     lazy_first = p.imgs and p.imgs[0].get("loading") == "lazy"
     if lazy_first: L("WARN", "performance/lazy-loading", "first image is lazy (LCP candidate should not be)")
     blocking = [a.get("src") for a, in_head in p.scripts if in_head and a.get("src") and not ({"defer", "async"} & set(a)) and a.get("type") != "module"]

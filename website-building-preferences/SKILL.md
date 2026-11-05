@@ -246,6 +246,23 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
 - Never replace an image in place under the same filename (it's cached as immutable). Rename it instead.
 - SVGs pass through untouched.
 
+### Speed and perceived speed, built into `starter/` (Will, 2026-11-05)
+- **Images:** `@11ty/eleventy-img`'s HTML transform turns every `<img>` into AVIF → WebP → JPEG at 320/640/960/1600 with
+  width/height, lazy by default. The first-screen image (hero; first rows of a list) is `loading="eager"
+  fetchpriority="high"`. Plain-colour placeholder tint while photos load, not Base64 blur-ups: those need `data:` in
+  the CSP and grow every page.
+- **Fonts:** `scripts/fonts.mjs` subsets to Latin WOFF2 (variable axes kept) and writes size-matched local fallbacks
+  (`size-adjust` + ascent/descent overrides), so text doesn't jump on swap; preload only the first-screen body font;
+  `check-glyphs.mjs` catches characters the subset lacks.
+- **Navigation:** speculation rules **prerender** on hover/press, plus cross-document **View Transitions** (reduced-motion
+  aware, §6).
+- **Long lists:** `.cv-auto` (`content-visibility: auto`) on repeated rows.
+- **Measure real visitors** with Cloudflare Web Analytics at launch (`site.analyticsToken`); check Early Hints on the
+  production domain.
+- **Base64:** don't, except things under ~1 KB. **Don't use** Rocket Loader (rewrites scripts, breaks the CSP), Auto
+  Minify (retired), Polish/Mirage (build-time beats them), Argo/Tiered Cache (pointless for static), Zaraz (only if a
+  site must carry third-party tags). Inline all CSS only on one-page sites, with its CSP hash generated at build.
+
 ### CSS, JS and fonts
 - All CSS in `src/css/`. Inline only critical above-the-fold CSS.
 - Fingerprint CSS URLs (a content-hash query string via an 11ty filter) so the immutable cache rule is safe.
