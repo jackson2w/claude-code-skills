@@ -438,3 +438,7 @@ Debian cloud image (GPT partition table with the growfs auto-resize attribute). 
 data disk, an older/non-cloud image, or a non-GPT layout may still need manual
 `growpart`/`resize2fs` — don't assume the zero-touch behavior generalizes without checking
 `df -h` after the fact regardless of which case applies.
+
+## Gotcha 15 — changing an LXC's `memory.dedicated` reboots the container
+
+Proxmox can resize a running container's memory live (`pct set <id> --memory N` needs no restart), but the bpg provider applies the change and then **reboots the container** (`vzreboot` task by the terraform token in pve's task log). The plan only says "update in-place" and gives no warning. It bit 2026-11-05: raising `claude-code` (CT 112) from 3 GB to 6 GB rebooted the Remote Control host and cut off every live session, including the one running the apply. Before changing memory on a container with live work, treat the apply as a reboot, or run `pct set` first and then edit the `.tf` to match, which leaves a plan with no changes.
