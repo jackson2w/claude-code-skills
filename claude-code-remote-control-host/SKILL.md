@@ -219,6 +219,8 @@ hosts; the account was the errand, the finding was the value).
    which would hide a real host-key change. Select the `github.com ssh-ed25519 …` line itself
    (homelab-ansible `f594983`, 2026-10-29).
 
+8. **A session whose worker has ended stays dead, and the server says nothing.** The app shows the session, sends `initialize`, and gets no answer, while every other session on the same server works. Check `ps` for `--session-id cse_<id>` under the server's PID (find the id with the remote-session tools' `list_sessions`). With stdout nulled (above), the journal records only server startup/crash errors, never workers. Recover with `/resume` from a new session on that server; restarting the unit also works but kills every live session on it. Put the service user in `systemd-journal` (read-only) so sessions can at least read the server's errors without root. (2026-11-05)
+
 ## 7. Terminal access alongside Remote Control, and herdr
 
 Remote Control has **no terminal client** — `claude --help` on 2.1.267 lists no subcommand that
