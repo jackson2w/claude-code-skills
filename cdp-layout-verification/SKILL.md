@@ -149,3 +149,6 @@ over "looks correct in the screenshot."
 - A local Chrome/Chromium binary that supports `--headless=new`.
 - `curl` and `python3` (or equivalent) for parsing the `/json` debugging
   endpoint response.
+
+## Hit-test links, not just measure them (2026-11-05, Abernathy)
+A decorative element drawn over real links swallows their clicks. Screenshots look right, Lighthouse scores 100, and box measurements are all fine. On Abernathy, a giant outline footer wordmark sat over the footer's link row at ≥1024px, so every footer link was dead on desktop. Only a real click test revealed it. For every visible `a`, check that `document.elementFromPoint(centre)` is the link or inside it. Scroll each page to the bottom too, because footers are where big decorative type tends to overlap. Fix decorative layers with `pointer-events: none`. Reference script: `~/projects/sites/mockups/scripts/dev/hit-test.mjs`.
