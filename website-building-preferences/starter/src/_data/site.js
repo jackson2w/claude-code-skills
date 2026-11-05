@@ -12,6 +12,9 @@ export default {
   ogImage: "/img/og/default.jpg",       // 1200x630 JPG; scripts/og-crop.cjs makes one from any photo
   ogImageAlt: "[describe the share image]",
   feed: "/feed.xml",                    // null on a site that doesn't publish posts
+  // Privacy page (privacy/privacy-policy, Required). Will, 2026-11-05: published by "Willie Jackson", contact
+  // security@jackson2w.com, no postal address. Change `updated` whenever the page's facts change.
+  privacy: { controller: "Willie Jackson", contact: "security@jackson2w.com", updated: "2026-11-05" },
   // false until launch day: every page noindex, robots.txt Disallow, caching off (see public/_headers)
   launched: false,
   // Self-hosted fonts, subset and given metric-matched fallbacks by scripts/fonts.mjs. Originals in src/fonts-src/.

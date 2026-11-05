@@ -365,8 +365,12 @@ graph tags to be built into all the websites that you build for me." The bar is 
   authentication items (unless the site has forms), i18n/hreflang (English-only sites), WebAuthn/OAuth well-knowns,
   MCP/A2A/commerce agent protocols. Markdown source endpoints (`/page.md`) are worth adding on content-heavy sites (a
   magazine): decide per site.
-- **Things only Will supplies, at launch:** the privacy page wording (Required: controller, contact, data, retention,
-  rights, date), any `includeSubDomains`/`preload` for HSTS, a security.txt contact if he ever wants one.
+- **Privacy page: decided 2026-11-05.** `starter/src/privacy.njk`, linked from every footer. Publisher "Willie Jackson",
+  contact `security@jackson2w.com`, no postal address; Will approved the facts (no cookies, ads or tracking; Cloudflare
+  hosting; cookieless Web Analytics, whose paragraph appears only when a token is set). Retention figures come from
+  Cloudflare's docs (7 days full detail, then about 10%; six months viewable). A site that adds anything that collects
+  data must update the page in the same change. `site-audit.py` fails a launched site whose homepage doesn't link it.
+- **Still Will's call per domain:** `includeSubDomains`/`preload` for HSTS; a security.txt (skipped 2026-11-05).
 - **Staying current:** the spec changes often (agent readiness especially). Monthly, read
   `https://specification.website/changelog/rss.xml` since the last check (date in the follow-up) and update
   `starter/`, this section and `site-audit.py` for any new or promoted item. Last checked: 2026-11-05.

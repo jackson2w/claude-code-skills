@@ -72,8 +72,10 @@ deploy with a browser console check before production (Abernathy 2026-11-05 did 
 
 - `launched: true` in `site.js`. That removes noindex (meta and header), opens robots.txt with the AI policy and
   Sitemap line, and turns on asset caching (CSS is fingerprinted; never replace an image or font in place: rename it).
-- A **privacy page** (Required): who runs the site, a contact, what data is collected (none, if there is no analytics),
-  retention, rights, a "last updated" date. Will writes or approves the wording.
+- **Privacy page** (Required): `src/privacy.njk`, linked from `footer.njk`. Will approved its facts 2026-11-05
+  (publisher Willie Jackson, contact security@jackson2w.com, no postal address; no cookies, ads or tracking; Cloudflare
+  hosting and cookieless Web Analytics). The analytics paragraph appears only when `site.analyticsToken` is set. If a
+  site adds anything that collects data (a form, an embed, a newsletter), update the page and `site.privacy.updated`.
 - DNS: a CAA record allowing only the CA Cloudflare uses; IPv6 is automatic on Cloudflare.
 - **Cloudflare Web Analytics** (free, cookieless; real visitors' Core Web Vitals, which Lighthouse can't see): in the
   dashboard, Analytics & Logs → Web Analytics → Add a site → manual snippet; put the token in `site.analyticsToken`.

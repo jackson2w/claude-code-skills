@@ -24,6 +24,7 @@ export default function (eleventyConfig) {
   });
   // "/css/style.css" | fp -> "/css/style.css?v=<content hash>": a changed file gets a new URL, so immutable caching is safe
   eleventyConfig.addFilter("fp", (url) => url + "?v=" + createHash("sha256").update(readFileSync("src" + url)).digest("hex").slice(0, 10));
+  eleventyConfig.addFilter("readablePrivacyDate", (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" }));
   eleventyConfig.addPlugin(rss);                                // dateToRfc3339, absoluteUrl, … filters used by head/jsonld/sitemap
   if (site.feed) eleventyConfig.addPlugin(feedPlugin, {         // foundations/feed-discovery + feed-hygiene
     type: "atom", outputPath: site.feed,

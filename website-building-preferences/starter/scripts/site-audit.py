@@ -213,6 +213,9 @@ def audit_page(url, preview):
     L("PASS" if skip else "WARN", "accessibility/skip-links", "skip link near the top" if skip else "no skip link among the first 5 links")
     untitled = [f.get("src", "?")[:40] for f in p.iframes if not f.get("title")]
     if untitled: L("FAIL", "accessibility/semantic-html", f"iframes without title {untitled}")
+    if path == "/":
+        priv = [a for a in p.anchors if "privacy" in (a["attrs"].get("href") or "").lower()]
+        L("PASS" if priv else ("WARN" if preview else "FAIL"), "privacy/privacy-policy", f"links to {priv[0]['attrs']['href']}" if priv else "no link to a privacy page")
     for tag in ("<main", "<nav", "<footer"):
         if tag not in html: L("WARN", "accessibility/semantic-html", f"no {tag}>")
     return [urllib.parse.urljoin(url, a["attrs"].get("href", "")) for a in p.anchors]

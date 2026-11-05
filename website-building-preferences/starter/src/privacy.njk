@@ -1,0 +1,36 @@
+---
+layout: base.njk
+permalink: /privacy/
+title: Privacy
+description: "What this site collects about visitors (very little), who handles it, how long it is kept, and how to ask about it or have it deleted."
+---
+{#- Will approved these facts 2026-11-05 (no cookies, no ads, no tracking; Cloudflare hosting and cookieless Web Analytics).
+    Every sentence must stay true for the site it's on: if a site adds a form, an embed, a newsletter or any other
+    third party, update this page and site.privacy.updated in the same change. Retention figures: Cloudflare's
+    Web Analytics FAQ and data-collection docs, read 2026-11-05. -#}
+{%- set pv = site.privacy -%}
+<article class="privacy">
+<h1>Privacy</h1>
+<p><time datetime="{{ pv.updated }}">Last updated {{ pv.updated | readablePrivacyDate }}</time></p>
+
+<p>{{ site.name }} is published by {{ pv.controller }}. Questions about this page or about your data go to <a href="mailto:{{ pv.contact }}">{{ pv.contact }}</a>.</p>
+
+<h2>The short version</h2>
+<p>This site sets no cookies, shows no ads, and does not track you, build a profile of you or sell anything about you. It doesn't ask you for any personal information.</p>
+
+<h2>What is collected, and by whom</h2>
+<p><strong>Hosting.</strong> The site is served by Cloudflare. Like any web host, Cloudflare's servers see the technical details of each request, such as your IP address, browser and the page you asked for, in order to deliver the page and protect the site from attacks. Cloudflare handles that data under <a href="https://www.cloudflare.com/privacypolicy/">its own privacy policy</a>.</p>
+{%- if site.analyticsToken %}
+<p><strong>Visit counts.</strong> The site uses Cloudflare Web Analytics to count visits and measure how fast pages load. It records the page you visited (without anything after a "?" in the address), the site you came from, your browser and device type, your country, and page-speed timings. It uses no cookies or other storage on your device, does not fingerprint you, and does not follow you across other websites. Cloudflare keeps the full detail for 7 days, then keeps a reduced summary of about a tenth of it; the site's owner can see six months of it.</p>
+{%- endif %}
+<p>Fonts, images and scripts all come from this site itself, so no other company is contacted when you read a page.</p>
+
+<h2>Why</h2>
+<p>To deliver the site and keep it secure{% if site.analyticsToken %}, and to understand, in total numbers, how many people read it and how quickly it loads{% endif %}. Under European data protection law, the basis for this is legitimate interest.</p>
+
+<h2>Your rights</h2>
+<p>You can ask what is held about you, ask for it to be corrected or deleted, or object to it being used. Because this site collects nothing about you directly, most such requests concern Cloudflare's records, and {{ pv.controller }} will help you make them. Email <a href="mailto:{{ pv.contact }}">{{ pv.contact }}</a>. If you are in the EU or UK, you can also complain to your local data protection authority.</p>
+
+<h2>Changes</h2>
+<p>If any of this changes, this page will be updated and the date at the top will change with it.</p>
+</article>
