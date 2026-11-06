@@ -54,8 +54,11 @@ Mirror the sibling fleet repo exactly:
 named the same as the host; Ansible warns "Found both group and host with same name" and it
 serves no purpose here:
 ```
-<hostname> ansible_connection=local ansible_python_interpreter=auto
+<hostname> ansible_connection=local ansible_python_interpreter=/usr/bin/python3
 ```
+Pin the interpreter to Debian's stable `/usr/bin/python3` link, not `auto`: `auto` prints Ansible's
+interpreter-discovery warning on every run, and a later Python install could change which interpreter
+it picks. homelab-ansible pins it this way; hermes-ansible switched from `auto` on 2026-11-05 (4643ebd).
 Playbooks target `hosts: <hostname>` (not `hosts: localhost`) for readability parity with the
 fleet repo's `hosts: <group>` convention.
 
