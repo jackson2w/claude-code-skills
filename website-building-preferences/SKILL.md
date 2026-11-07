@@ -37,6 +37,23 @@ description: >-
 - **Preview deploys:** throwaway mockups go to the Direct Upload project `wj-site-mockups` (wj-site-mockups.pages.dev) with `CF_PAGES_TOKEN` (Infisical homelab-fleet/dev, Pages Write, Will 2026-10-23). Create new Pages projects via the API, not `wrangler pages project create` (see cloudflare-pages-gotchas). Never touch the live `j2wtalent` Pages project from a mockup.
 - **Screenshot gotcha (2026-11-04):** Playwright `fullPage` clip screenshots render `mix-blend-mode` images (duotones) blank, so a correct page looks broken. Use scroll-and-capture viewport shots instead (`~/projects/sites/mockups/scripts/dev/vslice.mjs`). The dev box has no sharp/ImageMagick; resize images through Chromium canvas (`scripts/dev/batch-resize.mjs`).
 - **Mining a WordPress site for a redesign:** the public REST API (`/wp-json/wp/v2/posts|categories|tags|users|media`, `per_page=100`, `_fields=`) gives every post, author bio, taxonomy and featured-image size without admin access. Nested `_fields` like `media_details.width` silently return nothing with `include=`; ask for `media_details` whole.
+- **Clamped summaries cut words in half (Abernathy, 2026-11-06).** `-webkit-line-clamp` puts its "…" by trimming
+  characters, so "marching from" can show as "marching fro…". Fix it at build: a summary is leading whole sentences up to
+  N characters (an abbreviation never ends a sentence), a too-long first sentence is cut between words with "…", and N
+  comes from measuring each clamp's capacity at every width (`scripts/dev/clamp-capacity.mjs` in the mockups repo). Keep
+  the clamp only as a safety net sized never to fire, and prove it with `checks.mjs` (0 clamped). Will chose this.
+- **Tap-area padding moves `border-bottom` underlines (2026-11-06).** `padding-block` on an inline link enlarges the hit
+  area without moving text, but a `border-bottom` "underline" moves down with the padding (Abernathy's byline rule landed on
+  the date line below; Will caught it on his phone). Pad only links underlined with `text-decoration`. Any fix applied
+  to a list of selectors needs a phone screenshot of each selector, not just a passing measurement.
+- **Alternating bands with a fixed last band:** count from the end, `main > .band:nth-last-child(even of .band)`, so the
+  always-cream closing band never meets a cream neighbour whatever the page's section count (`of S` ignores stray
+  `<script>`s in main). Counting from the top (`:nth-child(even)`) left two creams touching on most sub-pages.
+- **WordPress migration: excerpts are content too.** Calls to action stripped from post bodies survive in WP excerpts
+  ("please submit your article here", "Subscribe via email"), and so do display-name quirks ("willie jackson") and
+  straight quotes in names. Run the same cleanup on excerpts, names and any summary field, then grep the built site.
+- **Consistency-pass toolkit:** `~/projects/sites/mockups/scripts/dev/` (README): pass-measure, checks, bands,
+  clamp-capacity, shots (one shot per selector), hit-test. Run against a branch preview (`--branch pass2`), then promote.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 
