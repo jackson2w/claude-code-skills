@@ -117,6 +117,14 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
 - **Moving a domain from an origin to Pages.** Add the custom domain in the dashboard; it offers to
   replace the existing proxied A record. A `www` → root redirect the old server did needs a zone
   Redirect Rule (template "Redirect from WWW to root") plus `www` as a second custom domain.
+- **Early Hints on Pages needs explicit `Link` headers (Abernathy, 2026-11-07).** Pages generated no `Link` header
+  from the HTML's `<link rel=preload>` tags on either `*.pages.dev` or the custom domain, so the zone's Early Hints
+  switch had nothing to send. Put `Link: </css/x.css?v=hash>; rel=preload; as=style, </fonts/y.woff2>; rel=preload;
+  as=font; type="font/woff2"; crossorigin` in `_headers` (generate it so fingerprinted URLs match), turn on Speed →
+  Early Hints. Cloudflare sends `HTTP/2 103` from the second request on (the first primes it); check with `curl -sv --http2`.
+- **Speed settings that fight a strict CSP:** Rocket Loader rewrites every script and injects its own (breaks Trusted
+  Types); keep it off. Cloudflare Fonts only rewrites Google Fonts links (no-op for self-hosted fonts). Web Analytics
+  in "JS snippet" mode injects nothing: count `beacon.min.js` per page to rule out double counting.
 - **A zone-scoped token's reach.** The homelab's `CF_ZONE_TOKEN` reads DNS, custom firewall rules and
   page rules, but gets "not authorized" for redirect/cache/transform rulesets and "Authentication
   error" for zone settings.
