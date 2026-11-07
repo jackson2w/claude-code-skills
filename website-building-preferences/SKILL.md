@@ -71,6 +71,15 @@ description: >-
   copy (701px) while the upload behind it is 2048px; request the base filename and read `media_details` before
   deciding a photo "can't be bigger". Some uploads really are small: search the media library before asking the owner.
 - **schema.org (researched 2026-11-07 for Abernathy; Will chose "do it all"):** worth doing as correctness, not as an AI trick. Google's May 2026 AI-features guide: no special markup for AI Overviews/AI Mode, keep it for rich results. Bing says schema helps Copilot; ChatGPT/Perplexity tests mostly read visible text, so never put a fact only in JSON-LD. Do: build BreadcrumbList from the SAME data as the visible trail (mismatches crept in on 4 page types); author pages = ProfilePage whose Person `@id` the Article.author points at; zoned datePublished/dateModified; Organization full record on home/About only; WebSite alternateName for site names; robots `max-image-preview:large` for Discover. Skip: VideoObject without a watch page, Event for past events, FAQ/QAPage for interviews, SearchAction (sitelinks search box gone), Speakable. Check every page on every build (mockups `scripts/abernathy-check-jsonld.py`); `validator.schema.org/validate` takes a POSTed `url=` for spot checks.
+- **A whole-site import, learned on Abernathy (2026-11-07; how-to in that repo's CLAUDE.md):** (1) a `foo.json` beside
+  `foo.js` in `_data/` shadows it under the same name (keep generated JSON outside `_data/`); (2) Eleventy adds only
+  page 1 of a paginated template to collections unless `addAllPagesToCollections: true` (the sitemap silently listed 14
+  of 280 pages); (3) Pages applies `_redirects` before serving files, so a pattern like `/:a/:b/` swallows real pages:
+  list per-URL rules (2,000 static allowed), and placeholders are not substituted inside a query string; (4) a branch
+  alias caches an old 301, so test redirects on the unique deployment URL; (5) prove every old URL with a resolver that
+  mimics Pages (redirects, then files, then #fragments) against the WordPress sitemaps; (6) photo encoding is CPU-bound:
+  shard it across idle machines (iMac, dfw) with matching sharp/libvips versions, then decode-check every file (killed
+  encoders leave truncated files); commit derivatives, since a Pages build can't encode hundreds of photos in time.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 
