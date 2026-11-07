@@ -125,6 +125,10 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
 - **Speed settings that fight a strict CSP:** Rocket Loader rewrites every script and injects its own (breaks Trusted
   Types); keep it off. Cloudflare Fonts only rewrites Google Fonts links (no-op for self-hosted fonts). Web Analytics
   in "JS snippet" mode injects nothing: count `beacon.min.js` per page to rule out double counting.
+- **Email Address Obfuscation (Scrape Shield, ON by default) breaks under Trusted Types.** On a proxied custom domain
+  it rewrites every address to `[email protected]` + `/cdn-cgi/l/email-protection` and its decoder sets `innerHTML`,
+  which `require-trusted-types-for 'script'` blocks, so addresses never come back (`*.pages.dev` is untouched, so
+  previews look fine). Turn it off at launch (Security → Settings), or wrap addresses in `<!--email_off-->…<!--/email_off-->`.
 - **A zone-scoped token's reach.** The homelab's `CF_ZONE_TOKEN` reads DNS, custom firewall rules and
   page rules, but gets "not authorized" for redirect/cache/transform rulesets and "Authentication
   error" for zone settings.
