@@ -46,9 +46,11 @@ description: >-
   area without moving text, but a `border-bottom` "underline" moves down with the padding (Abernathy's byline rule landed on
   the date line below; Will caught it on his phone). Pad only links underlined with `text-decoration`. Any fix applied
   to a list of selectors needs a phone screenshot of each selector, not just a passing measurement.
-- **Alternating bands with a fixed last band:** count from the end, `main > .band:nth-last-child(even of .band)`, so the
-  always-cream closing band never meets a cream neighbour whatever the page's section count (`of S` ignores stray
-  `<script>`s in main). Counting from the top (`:nth-child(even)`) left two creams touching on most sub-pages.
+- **Alternating bands (corrected 2026-11-07):** with a cream page header AND a fixed-colour closing band, two colours
+  cannot alternate at both ends when the band count is even; counting from the end only moved the clash to the top
+  (header + first band merged on About, Contributors, Archive). Will's rule: count from the top,
+  `main > .band:nth-child(odd of .band)` = paper (`of S` ignores stray `<script>`s), and let the closing band take
+  whichever colour comes next. Verify with a script that every page has no two same-colour neighbours, header included.
 - **WordPress migration: excerpts are content too.** Calls to action stripped from post bodies survive in WP excerpts
   ("please submit your article here", "Subscribe via email"), and so do display-name quirks ("willie jackson") and
   straight quotes in names. Run the same cleanup on excerpts, names and any summary field, then grep the built site.
