@@ -54,8 +54,22 @@ description: >-
 - **WordPress migration: excerpts are content too.** Calls to action stripped from post bodies survive in WP excerpts
   ("please submit your article here", "Subscribe via email"), and so do display-name quirks ("willie jackson") and
   straight quotes in names. Run the same cleanup on excerpts, names and any summary field, then grep the built site.
-- **Consistency-pass toolkit:** `~/projects/sites/mockups/scripts/dev/` (README): pass-measure, checks, bands,
-  clamp-capacity, shots (one shot per selector), hit-test. Run against a branch preview (`--branch pass2`), then promote.
+- **Consistency-pass toolkit:** `~/projects/sites/mockups/scripts/dev/` (README): pass-measure + pass-analyze.py,
+  checks, bands, hit-test, byline-gap, tall-check, pass-probe-rows, clamp-capacity, shots. The README lists the known,
+  accepted flags (tilted prints read as spills, optical -0.03em title offsets, display sizes off the step scale) so a
+  pass doesn't re-chase them. Run against a branch preview (`--branch pass2`), then promote.
+- **Measurement misses collisions between elements (2026-11-07).** pass-measure checks each element against its
+  container, not against its neighbours: twice Will found, on his phone, a byline divider touching the red name
+  underline above it (an inline-block's `border-left` is as tall as the whole line box). When a layout stacks a
+  divider under an underline, measure the gap (`byline-gap.mjs`); give the divider a text-height line box.
+- **Images bigger than the text column under a strict CSP (2026-11-07).** To break a photo out to a wider sibling's
+  width, make the wide parent a size container (`container-type: inline-size`) and use `100cqw` with a negative
+  margin of `(100% - 100cqw) / 2`; verify the edges equal the sibling's. A frame sized from the photo (`fit-content`,
+  `width: auto` + `max-height`) collapses to 0 until a lazy image loads, and `style=""` is banned by the CSP: emit a
+  shape class per photo (`r-WxH`) from the build into a generated stylesheet that sets `--r`, and size the frame from it.
+- **WordPress images: the displayed file is not the original.** Posts often show an edited `-e<timestamp>` or `-WxH`
+  copy (701px) while the upload behind it is 2048px; request the base filename and read `media_details` before
+  deciding a photo "can't be bigger". Some uploads really are small: search the media library before asking the owner.
 - **schema.org (researched 2026-11-07 for Abernathy; Will chose "do it all"):** worth doing as correctness, not as an AI trick. Google's May 2026 AI-features guide: no special markup for AI Overviews/AI Mode, keep it for rich results. Bing says schema helps Copilot; ChatGPT/Perplexity tests mostly read visible text, so never put a fact only in JSON-LD. Do: build BreadcrumbList from the SAME data as the visible trail (mismatches crept in on 4 page types); author pages = ProfilePage whose Person `@id` the Article.author points at; zoned datePublished/dateModified; Organization full record on home/About only; WebSite alternateName for site names; robots `max-image-preview:large` for Discover. Skip: VideoObject without a watch page, Event for past events, FAQ/QAPage for interviews, SearchAction (sitelinks search box gone), Speakable. Check every page on every build (mockups `scripts/abernathy-check-jsonld.py`); `validator.schema.org/validate` takes a POSTed `url=` for spot checks.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
