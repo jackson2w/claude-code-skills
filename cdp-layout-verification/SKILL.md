@@ -141,6 +141,11 @@ over "looks correct in the screenshot."
   says they should, diff the actual served/built file (e.g. `_site/**` or
   `dist/**`) against source — a stale build or cached asset can look like a
   CSS bug that isn't one.
+- **A tap right after a synthetic swipe is ignored (2026-11-06, Abernathy gallery).** Headless
+  swipe tests need the CDP touch API (`Input.dispatchTouchEvent`), and Chromium's touch emulator
+  then ignores a tap landing within about 1 s of a swipe on the same element. That looks exactly
+  like a broken tap-to-advance handler but is a harness artifact. Space synthetic taps more than
+  1 s after any swipe, or confirm in a real browser, before calling the interaction broken.
 
 ## Requirements
 

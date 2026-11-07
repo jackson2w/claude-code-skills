@@ -207,6 +207,14 @@ Verify each rather than copying the sibling host's playbook:
   for Python and matches *nothing* on Node, which would report a permanently reassuring
   `exceptions=0`.
 
+- **A verifier reading a rotating log can miss a delivery that rotated out from under it.** On
+  hermes, `agent.log` rotated at 4:00 PM CT (5 MB cap) just after a 3:37 PM canary delivery, which
+  moved into `agent.log.1`; the verifier read only the live file, paged "CHUKA CANARY MISSED" at
+  4:30 PM, then RECOVERED at 5:00 PM (2026-11-05; fixed in hermes-ansible `5c75e38`). Whenever the
+  signal is an *absence* in a log that rotates, read the previous rotated file too. The same run
+  showed the `0\n0` `|| echo 0` count bug above had regressed after its 2026-09-04 fix: re-verify
+  that old fixes are still deployed rather than assuming they stay applied.
+
 ## Test the paths that must fail, not just the happy one
 
 The original tracker's defect was invisible precisely because nobody tested the not-firing case.
