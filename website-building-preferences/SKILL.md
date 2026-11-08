@@ -279,6 +279,14 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
   Claude-User, PerplexityBot), block training (GPTBot, ClaudeBot, Google-Extended, Applebot-Extended, CCBot, …), plus
   `Content-Signal: search=yes, ai-input=yes, ai-train=no`.
 - No `security.txt` (Will skipped it 2026-11-05: no contact address to publish).
+- **Citation tags on posts (Abernathy, 2026-11-08).** Wikipedia's citation tool (Citoid) ignores JSON-LD for authors and
+  scrapes the visible byline ("Alexander Hardy7 min"). Add Dublin Core (`<link rel="schema.DC" …>`, `DC.title`,
+  `DC.creator` as "Last, First", `DC.date`, `DC.publisher`) plus `<meta name="author">` in **natural order with no degree
+  or Jr./II suffix**: on a Cloudflare custom domain Citoid falls back to a scraper that reads only that tag and takes the
+  last word as the surname. **Not Highwire `citation_*`**: it makes every post a journal article with no journal, which
+  Wikipedia flags as an error. Test against the real tool, preview *and* live (they took different paths):
+  `curl https://en.wikipedia.org/api/rest_v1/data/citation/mediawiki/<urlencoded URL>`. Abernathy repo: filters
+  `citationName`/`plainName` in `eleventy.config.js`.
 
 ## 10. Performance
 
