@@ -133,9 +133,29 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
   page rules, but gets "not authorized" for redirect/cache/transform rulesets and "Authentication
   error" for zone settings.
 
+## Accept-negotiated image Functions hand link-preview scrapers the original (2026-11-07, photo-site)
+
+If a Pages Function picks AVIF/WebP derivatives from the `Accept` header and "falls back to
+the original" otherwise, every `og:image` fetch takes the fallback: iMessage, Slack, Facebook
+and Twitter scrapers send `Accept: */*` with no image types. On the photo site that meant a
+2.8 MB, 6000 px JPEG behind each preview card while browsers got an 85 KB AVIF — under every
+platform's size cap, so nothing failed, and a browser-shaped `curl` probe returned 200 and
+looked fine. Two fixes, both needed: pre-generate one JPEG derivative per image (no on-the-fly
+resize on Pages, see the first section) and serve it when no modern format is accepted; and
+emit `og:image:width`/`height` so the first share renders full size. Verify as the scraper,
+not the browser:
+
+```bash
+curl -s -A facebookexternalhit/1.1 -H 'Accept: */*' -o /tmp/og -w '%{content_type} %{size_download}B\n' "$OG_URL"
+```
+
+The edge cache keys on `Accept`, so a fix is invisible to any already-cached `og:image` URL
+for its `max-age`; change the URL (a different `w=`) when the derivative set changes.
+
 ## Related
 
 - `wordpress-static-export`: a WordPress site exported to a Git-integrated Pages project.
+- `photo-site-album-ingest`: the album workflow that produced the scraper finding above.
 
 For Workers Cron Trigger gotchas (day-of-week numbering, testing
 `scheduled()` against real bindings, subrequest-limit sizing) and R2

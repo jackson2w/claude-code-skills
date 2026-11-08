@@ -85,6 +85,22 @@ so it doesn't need to be re-derived (or mis-derived) each time.
      already hosted remotely (point the test file's `<img>`/background URL
      directly at the live/remote asset).
 
+## Translating Will's crop feedback into coordinates (2026-11-07)
+
+He gives feedback per photo URL in plain words. Mapping that has held up:
+
+| He says | Meaning for the crop centre |
+|---|---|
+| "fully centred" (a person) | centre on the midpoint of head and feet, not the face |
+| "a bit higher in the crop" | move the crop *down*: larger `y`, about 10–15 % headroom above the top head |
+| "off-centre" (a group) | `x` at the midpoint of the group's outer edges |
+| "shift the preview all the way down" | subject near the top edge: use `"top"`, not a numeric `y` |
+
+Render the source with a 10 % grid before picking numbers
+(`photo-site-album-ingest/scripts/grid-sheet.sh`), and review the regenerated
+derivative as an image, not the arithmetic. Saliency crops get two-person
+portraits wrong most often; check those first.
+
 ## Worked example
 
 Source photo 5712×4284 (aspect 1.333), target box 3:2 (aspect 1.5).
