@@ -285,3 +285,14 @@ marked working / blocked / idle, so a session waiting on input is visible withou
    thread. Observed 2026-09-11 within minutes of the terminal surface existing: the terminal
    resumed the phone's session and printed its own state summary, which read like a person asking
    a question.
+
+3. **The terminal's `/resume` picker hides every session started from the app** (2026-11-08,
+   Claude Code 2.1.318). Remote Control sessions are written with `"entrypoint":"sdk-cli"`, and the
+   picker leaves those out, so on this host it showed only two empty "(session) · 0 bytes" stubs
+   while dozens of real sessions existed. Resume one by ID instead: find it with
+   `grep -l '"customTitle":"<name>"' ~/.claude/projects/<dir>/*.jsonl`, then
+   `claude --resume <id> --remote-control` (the `--remote-control [name]` flag exists in 2.1.318;
+   untested combined with `--resume`). From the app, `/resume <id>` in a new session on the same
+   server works. Related: archiving a session in the app ends its worker (the pane then shows
+   "Remote Control disconnected … (code 4090)"), and herdr keeps restoring whatever session a pane
+   last ran, archived or not.
