@@ -625,3 +625,6 @@ it. Reproduced 2026-11-02 at 4:31 PM CST: the iPad moved from home Wi-Fi to Fi a
 - So the roaming devices take DNS from an iOS DNS profile pointing at a Cloudflare DoH Worker fed
   with Pi-hole's lists, with "Use Tailscale DNS settings" turned off on that device only. See the
   `pihole-lists-doh-worker` skill. Upstream bug report pending.
+
+**2026-11-09 update: the same stall also hit at HOME on Wi-Fi, not just after a roaming network change.** Will's iPhone showed Online:true/Active:false, LastHandshake never, with pings from pve/pihole/ansible-ctrl all timing out, while connected to AMPJ5 the whole time (no SSID or network change at all). It was the real cause of a "Pi-hole takes a long time to load" report (pihole.jackson2w.dev blank 20-60s or timing out); Pi-hole's own DNS answered instantly throughout, since that query path doesn't use the tunnel. Will: "much, much faster with Tailscale turned off." So don't scope this gotcha's diagnosis to roaming/cellular hand-offs only -- check for it on any "slow site at home" report too, by pinging the phone's tailnet IP from pve/pihole/ansible-ctrl. Full detail: the `reference_iphone_tailscale_cellular_stall` memory.
+

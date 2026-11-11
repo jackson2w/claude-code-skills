@@ -428,6 +428,8 @@ prompt-gated. The **changes** dispatch script (as opposed to the readonly one) i
 never added to Hermes's own `command_allowlist`, so every invocation still triggers a live
 Telegram approval — the same split OpenClaw uses.
 
+**2026-11-08: dfw was deleted** (Vultr instance, firewall group and Tailscale device all removed; see memory project_dfw_vultr_buildout). Hermes's SSH egress allowance to dfw was dropped the same day (hermes-ansible 2b5dea2) — the `hermes-dfw-remote` user/pattern described above no longer has a live target and is historical only, describing how the fleet-SSH pattern was originally designed alongside OpenClaw's equivalent.
+
 ## UID-scoped egress firewall (`hermes_egress` nftables table)
 
 Same defense-in-depth pattern as `dfw`'s `openclaw_egress` table (see

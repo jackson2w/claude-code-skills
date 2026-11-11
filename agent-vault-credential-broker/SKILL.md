@@ -526,3 +526,9 @@ Moved 7 keys in about 5 minutes with 3 restarts. Everything below was verified l
   provider's service last, right before its own swap.
 - Restart order: the low-risk keys together, then chat, then the model provider. Write the planned-restart marker
   (`/root/state/openclaw-planned-restart`) before each hand-run restart.
+
+## Direct, credential-free fetches are allowed to bypass the vault (decided 2026-11-08)
+
+An agent's UID-scoped egress firewall (e.g. `hermes_egress`) typically allows outbound tcp/443 to any address for the agent's own user, independent of Agent Vault's proxy. That means **Agent Vault is opt-in, not an egress filter** — an agent can always reach the open internet directly (`--noproxy` or equivalent) if a request through the vault's proxy is refused. This surfaced 2026-11-07 when Chuka (Hermes) hit a vault-proxy refusal fetching a public URL and fell back to a direct fetch instead of escalating.
+
+**Rule (Will, 2026-11-08):** public, credential-free reads may go direct. Anything that carries a credential must go through the vault; a vault refusal for a credentialed call goes to Will, not around it. Don't propose closing direct 443 egress as a fix unless Will asks — that option was explicitly declined.

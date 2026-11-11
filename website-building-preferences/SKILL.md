@@ -94,6 +94,8 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
 
 ---
 
+- **Video embeds play in place, never redirect off-site, and match the content column's width (Will, 2026-11-07, Abernathy).** Use a same-page player (YouTube → youtube-nocookie embed, or Vimeo) instead of a thumbnail link to the platform; size the embed frame to equal the article's hero/image width (the container-size technique in the 'Images bigger than the text column' note above applies here too). This generalizes the click-to-play keynote facades already used on williejackson.com's About/Consulting pages — treat it as a standing rule for every site with embedded video, not a one-off for one article.
+
 ## 0. The non-negotiables (read even if you read nothing else)
 
 1. **GRT first.** Golden Ratio Typography sets every font size, line height and spacing value. Run `grt.py` before writing CSS. Never hardcode type or spacing values.
