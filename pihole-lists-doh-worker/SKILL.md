@@ -124,3 +124,24 @@ sync, so 2 s just makes apps re-ask for blocked trackers (more requests, more ra
 DoH test asserts the 300. Keep the sync **nightly** even though blocklists change weekly: it only
 deploys on a content-hash change, and it's what makes the owner's own allow/deny edits follow the
 device by the next morning.
+
+## ABP-style adlists (HaGeZi etc.): domain + subdomains, not exact (2026-11-12)
+HaGeZi recommends its **Adblock** format for Pi-hole (`||domain^` lines; the old plain `domains/`
+folder is gone from the repo — use `https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt`).
+Pi-hole v6 gravity parses these as "ABP-style domains" and stores them in the `gravity` table **as
+`||domain^`**, matching the domain and every subdomain. Two traps:
+- A sync that filters gravity rows with a plain-domain regex **silently drops all of them** (they
+  never reach the Worker; the sync still "succeeds"). Split them out: `^\|\|(domain)\^$` →
+  `lists/block-abp.txt`, sorted bare domains.
+- The Worker must check the name **and each parent** (`a.b.x.com → b.x.com → x.com → com`) against
+  that list (`makeSuffixBlocklist`, same in-place binary search). Exact-only lookup would miss every
+  subdomain.
+Apply the min-size / shrink guards to exact + ABP combined. Size is fine on Workers Paid: 78k exact +
+225k ABP = 5.9 MB / 2.1 MB gzip bundle, +6 ms startup, ~10 µs per 6-label lookup.
+- API add: `POST /api/lists?type=block` (type must be a QUERY param, not in the body), body
+  `{address, comment, groups:[0], enabled:true}`, then `pihole -g`.
+- The iMac replica (nebula-sync, CRON 03:30, RUN_GRAVITY=false) gets the adlist row only at its next
+  sync and the content only at its weekly gravity: `docker restart nebula-sync`, then
+  `docker exec pihole pihole -g` there.
+- Ad-hoc DoH checks need a non-default User-Agent (Cloudflare bot check 403s Python's) and a real
+  answer parser: Cloudflare appends an OPT record, so "last 4 bytes == 0" reads everything as blocked.
