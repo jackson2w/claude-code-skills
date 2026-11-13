@@ -17,6 +17,11 @@ a watcher (`proton-watch.py`, homelab-ansible) that fails over between tunnels. 
 - The client's `.conf` holds a private key: the user uploads it in the UI. Never print the
   networkconf `wireguard_client_configuration_file` field.
 - Newer IP/DOMAIN routes beat an older INTERNET route for the same device.
+- **Swapping a client's config without deleting it** (done 2026-11-13): `PUT rest/networkconf/<id>`
+  `{"wireguard_client_configuration_file": "<the .conf as PLAIN TEXT>", "wireguard_client_configuration_filename": "x.conf"}`.
+  Send the body through a pipe fd or stdin, never argv. Back up the old text first, base64-encoded:
+  `infisical-set.sh` strips newlines from multi-line values. The upload **resets `interface_mtu_enabled` to
+  false**, so re-PUT the MTU afterwards. Verify with a provider-specific signal, not just "tunnel up".
 - Interface MTU is editable without re-uploading: `PUT rest/networkconf/<id>
   {"interface_mtu_enabled":true,"interface_mtu":1400}`; leak-free.
 
@@ -65,3 +70,8 @@ gateway first, then Pi-hole; remove in reverse. `scripts/spectrum-bypass.py` doe
 
 - **Proton has a burst limit on new TCP connections, but check real client traffic before blaming it.** From Linux clients through any Proton server or port, only 5 simultaneous connects are instant; the rest wait for 1/3/7 s SYN retries. Two lock-step pingers lose ~50%. Yet Apple devices' real bursts (40 at once) were all answered in 0.03 s in an AP capture (2026-11-13), so the limit did not explain their stalls. Proton also terminates TCP itself: a closed port "connects" in ~20 ms through it. Always compare a lab finding with a capture of the affected device before calling it the root cause.
 - **Fresh-connection probes miss idle-connection failures.** If users see apps hang on reused connections while every probe passes, test the same TLS connection after 30–900 s idle (hang = black hole, FIN/RST = fine).
+
+- **Proton VPN Accelerator = a TCP-terminating proxy.** With it on, a closed port "connects" in ~20 ms and a
+  distant server answers impossibly fast. With it off, the real server answers. The setting is chosen when
+  the config is generated (`# VPN Accelerator = on|off` comment). It is the leading suspect for apps
+  hanging on accepted-but-silent connections (trial running from 2026-11-13).
