@@ -62,3 +62,6 @@ gateway first, then Pi-hole; remove in reverse. `scripts/spectrum-bypass.py` doe
 - Don't judge VPN health by the gateway's "CONNECTED" (stayed connected with zero traffic).
 - Don't blame DNS caching for "loads now": check whether lookups were already cache hits when failing.
 - Don't add an echo service another script relies on for WAN egress (ifconfig.me: the WAN drill).
+
+- **Concurrent pings fake loss.** Two `ping` processes from one host through the same UniFi WireGuard client lose ~50% each (seen on Proton-1 and Proton-2, 2026-11-12); one at a time loses 0. Run one pinger per tunnel.
+- **Fresh-connection probes miss idle-connection failures.** If users see apps hang on reused connections while every probe passes, test the same TLS connection after 30–900 s idle (hang = black hole, FIN/RST = fine).
