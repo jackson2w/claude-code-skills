@@ -145,3 +145,5 @@ Apply the min-size / shrink guards to exact + ABP combined. Size is fine on Work
   `docker exec pihole pihole -g` there.
 - Ad-hoc DoH checks need a non-default User-Agent (Cloudflare bot check 403s Python's) and a real
   answer parser: Cloudflare appends an OPT record, so "last 4 bytes == 0" reads everything as blocked.
+
+- **macOS 26.1+ (Tahoe) DNS profile install fails** with "The 'VPN Service' payload could not be installed. The VPN service could not be created" unless the top-level profile has `PayloadScope` = `System` (paulmillr/encrypted-dns#190). iOS/iPadOS ignore the key, so set it always. A known Apple regression; some Macs on 26.4 reportedly still fail.
