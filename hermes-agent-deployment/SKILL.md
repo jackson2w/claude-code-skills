@@ -818,3 +818,19 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
   failed afterwards with `exit 127 ... not found` (a missing interpreter, not a missing script). Its
   faster-whisper lived in `stt-lib` built for that venv's 3.11. Fixed with its own pinned venv
   (hermes-ansible `hermes-stt-install.yml`), so STT no longer depends on Hermes's Python at all.
+
+## Remote MCP through Agent Vault: three traps (agent-tools/unifi, 2026-11-14)
+
+- **Wiring:** `mcp_servers.<name>.url` + `headers.Authorization: "Bearer __placeholder__"`; an Agent Vault
+  `bearer` service for the host replaces it in transit. Hermes' MCP client honours `HTTPS_PROXY` (explicit
+  httpx mounts in `tools/mcp_tool_transport.py`), so no NO_PROXY or egress change is needed. A tailnet
+  host also needs its IP in the broker's netguard allowlist.
+- **`hermes config get` masks header values** ("Bear...er__"). A desired-config loop that compares
+  `config get` to the wanted value therefore never matches and restarts the gateway on every run. Set
+  header keys in their own task that greps `config.yaml` instead.
+- **`hermes mcp test <name>` from a plain shell has no gateway.env**, so it goes direct (a 401 from a
+  vault-brokered server), and its errors, including "parking until a reconnect", land in the SAME
+  `~/.hermes/logs/{agent,errors}.log` as the gateway's. That looks exactly like the gateway failing.
+  Source `gateway.env` (`set -a; . gateway.env`) before testing, and trust the gateway's own line
+  `MCP server '<name>' (HTTP): registered N tool(s)` or the server's access log by source IP
+  (the vault's tailnet IP = brokered, hermes' own = direct).
