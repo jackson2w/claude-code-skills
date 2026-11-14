@@ -75,3 +75,5 @@ gateway first, then Pi-hole; remove in reverse. `scripts/spectrum-bypass.py` doe
   distant server answers impossibly fast. With it off, the real server answers. The setting is chosen when
   the config is generated (`# VPN Accelerator = on|off` comment). It is the leading suspect for apps
   hanging on accepted-but-silent connections (trial running from 2026-11-13).
+
+- **Adding another device to the VPN (2026-11-13, netprobe):** copy an existing per-device INTERNET route object (GET `v2/api/site/default/trafficroutes`), drop `_id`, change `description` and `target_devices[].client_mac`, then POST (201). Add its reserved IP to `source.ips` of the QUIC-reject policy with a full-object PUT to `firewall-policies/<id>`. If a watcher fails over by route ID (proton-watch `DALLAS_ROUTES`), add the new route id there too, or that device stays on a dead tunnel. Verify from the device: `1.1.1.1/cdn-cgi/trace` shows the provider exit IP.
