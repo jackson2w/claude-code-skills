@@ -31,6 +31,28 @@ side. `--check` always reports that task as changed. When a run is meant to chan
 Caddyfile, compare `caddy version` with the latest release and use `--start-at-task "Deploy
 Caddyfile"`, then confirm the binary's checksum didn't move. Make upgrades a deliberate run.
 
+## Upgrading a pinned custom build (done 2026-11-15, v2.11.7 → v2.11.9)
+
+The homelab pins `caddy_version` + `caddy_sha256` in `caddy-install.yml`. The build server compiles on
+request, so two downloads of the same version can hash differently. Don't let the playbook download:
+1. Read the release notes' **Breaking changes** (2.11.8 tightened config validation).
+2. On the Caddy host, download `...&version=vX.Y.Z` to a side path; check `caddy version`,
+   `caddy list-modules | grep cloudflare`, `sha256sum`.
+3. `set -a; . <EnvironmentFile>; set +a; <new> validate --config /etc/caddy/Caddyfile --adapter caddyfile`.
+4. Keep the old binary (`/usr/local/bin/caddy.vOLD`), `install` the new one, set the pin to the hash
+   you actually installed, run the playbook (checksum matches → no download), re-run for `changed=0`.
+5. Verify: `openssl x509 -ext subjectAltName` still shows only `DNS:*.<zone>`; real requests to several
+   vhosts (`ssl_verify_result=0`); `dig @1.1.1.1` empty.
+6. **Prove DNS-01 without touching production:** run the new binary as a second instance with
+   `admin off`, its own `storage file_system <tmp>`, `acme_ca` = Let's Encrypt **staging**, odd
+   `http_port`/`https_port`, one throwaway name, `tls { dns cloudflare {env.CF_API_TOKEN} }`; wait for
+   `certificate obtained successfully` (challenge_type dns-01), then kill it and delete the tmp dir.
+
+**Never run Caddy with `--environ` when a secret arrives through the environment.** It prints every
+variable at startup into the journal: the homelab's `ExecStart=caddy run --environ` had written
+`CF_API_TOKEN` 37 times (and so into every PBS backup of the CT). Removed 2026-11-15; check with
+`journalctl -u caddy -o cat | grep -c CF_API_TOKEN=` (count only).
+
 ## One wildcard cert covering many hostnames
 
 Put every internal hostname in a **single site block** keyed on the apex + wildcard, and route
