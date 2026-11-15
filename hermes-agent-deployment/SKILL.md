@@ -156,6 +156,14 @@ before trusting a cron test:**
   processed, with no error anywhere. **Never manually `hermes cron run` a `--monitor-script`
   job to test it.** Wait for a real scheduled tick, or check `~/.hermes/logs/agent.log` for
   `monitor output unchanged` after a manual trigger to confirm whether this happened.
+- **A failed run consumes the wake (2026-11-15).** The run fires because the monitor output changed;
+  if the LLM call then dies (provider stall, HTTP 429), the output is still the new value, so nothing
+  ever fires again and the work silently never happens. Make the monitor output depend on whether the
+  work got DONE, not only on what arrived: hermes-ansible `check-incident-briefs.sh` appends `open N`
+  (unanswered items, so each answer changes the output and wakes the next one) and a retry suffix keyed
+  on the job's `last_run_at` when `last_status` is `error` (capped at 3 per wake, stored so the output
+  stays stable between failures). Also give one item per run: a three-item run took 78 min on glm-5.3.
+  The first tick of a new monitor job is a baseline run with the LLM (it ran and stalled here too).
 - Separately (not a monitor-script issue): `--deliver telegram` on a `hermes cron create` job
   can silently fail to resolve a delivery target (`hermes cron list` shows "⚠ Delivery failed:
   no delivery target resolved for deliver=telegram") even on a job that completes `ok` —
