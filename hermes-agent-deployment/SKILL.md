@@ -834,3 +834,9 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
   Source `gateway.env` (`set -a; . gateway.env`) before testing, and trust the gateway's own line
   `MCP server '<name>' (HTTP): registered N tool(s)` or the server's access log by source IP
   (the vault's tailnet IP = brokered, hermes' own = direct).
+
+## Enabling a plugin after the PM migration (2026-11-15)
+
+`hermes plugins enable <name>` re-syncs the PM venv and reads `/usr/local/lib/hermes-agent/install-stamp.json` (root, 0600). As the `hermes` user it fails "invalid package install stamp — reinstall this application". Run it as root: `env HOME=/home/hermes HERMES_HOME=/home/hermes/.hermes /usr/local/lib/hermes-agent/.hermes/bin/hermes plugins enable <name> --no-allow-tool-override`, then confirm config.yaml is still hermes:hermes.
+
+**Cron safety boundary:** under `approvals.cron_mode: deny`, only commands Hermes's DANGEROUS_PATTERNS flag are blocked. An ssh to a custom dispatch script is never flagged, so it runs. Gate such scripts with a `pre_tool_call` plugin that inspects **both** `terminal` (`command`) and `execute_code` (`code`), because execute_code is often pre-approved.
