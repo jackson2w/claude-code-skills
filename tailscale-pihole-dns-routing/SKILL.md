@@ -202,6 +202,20 @@ takes over `/etc/resolv.conf` directly ("direct mode") — and then there's no f
 general queries (see the next section). Installing systemd-resolved gives Tailscale a manager to
 register into, so general DNS goes wherever systemd-resolved is configured to send it.
 
+**With Override ON, servers must run `tailscale set --accept-dns=false` (2026-11-15).** Override on
+makes tailscaled register `~.` (DefaultRoute yes) on `tailscale0`. The global scope also has `~.`
+pointing at Pi-hole, so systemd-resolved, finding two equally specific matches, sends **every query
+to both** at once: Pi-hole's LAN IP and 100.100.100.100 (which forwards to Pi-hole's tailnet IP).
+Pi-hole logs the second copy as "already forwarded" (its dashboard's grey "Other"), daily queries
+rise ~40%, and each server shows up twice (LAN IP and 100.x). This sat dormant in the homelab for
+months and switched on fleet-wide overnight on 2026-11-13/14 (trigger not found: no Tailscale update,
+no reboot). Fix: servers set accept-dns off, and Pi-hole forwards the tailnet domain to its own
+quad-100 (`server=/<tailnet>.ts.net/100.100.100.100` in `misc.dnsmasq_lines`, and the same on any
+replica) so `*.ts.net` names keep resolving. Prove it with one uncached name: `resolvectl query
+probe-$RANDOM.example.com` on the server, then Pi-hole's `/api/queries?domain=` must show exactly
+one client IP (the LAN one). `resolvectl status tailscale0` should show `Current Scopes: none`.
+Roaming personal devices keep accept-dns on (that is what gives them Pi-hole while away).
+
 ### Why turning off "Override DNS servers" can silently break DNS entirely (not just visibility)
 
 If a host is in Tailscale "direct mode" — `/etc/resolv.conf` reads `nameserver 100.100.100.100`
