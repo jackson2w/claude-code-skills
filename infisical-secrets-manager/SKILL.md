@@ -173,7 +173,7 @@ already has one: the newest often doesn't on its release day. Bump the tag in
 `files/infisical-server/docker-compose.prod.yml` and run the playbook; it pulls, `pg_dump`s, restarts, waits
 for `/api/status` and checks the migration line. Schema migrations are one-way: rollback is the previous
 compose plus the dump. The whole fleet's fetches fail for the ~30 s restart, so stay clear of the
-02:30–03:30 CT backup hour. v0.162.20 → v0.165.16 on 2026-10-06 took 32 s with zero error logs.
+02:30–03:30 CT backup hour. v0.162.20 → v0.165.16 on 2026-10-06 took 32 s with zero error logs. v0.165.16 → v0.167.10 on 2026-11-16 (playbook 113 s end to end, 0 error logs, 0 "policy not migrated"). **From v0.167.8, reading audit logs (API and UI) needs a paid licence** on self-hosted; nothing in the fleet reads them, Will accepted losing the UI page. Most v0.166–0.167 breaking changes are Infisical's *built-in* Agent Vault, PKI and approval policies, which this fleet does not use (our Agent Vault is the separate product). **The restart window fails every wrapped timer job that fires during it** (11-16: post-reboot-verify, roaming-dns-canary, wan-failover-watch, wp-static-publish). watcher-failed-notify does not page on a single failure; afterwards run `systemctl reset-failed <unit>; systemctl start <unit>` on each so `systemctl --failed` is clean, then check a fetch from ansible-ctrl and hermes (`infisical-wrapper.sh restic cat config`).
 
 ## Verification discipline — do all of this, in order, for every credential
 
