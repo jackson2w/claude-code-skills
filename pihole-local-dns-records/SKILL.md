@@ -51,6 +51,18 @@ resolution is actually working fine — this looks exactly like a real failure b
 concluding a mapping is broken, re-run the specific `dig` call on its own (or drop `+short` for
 full output) rather than trusting a blank line from a combined command.
 
+## Local records are cached for 5 minutes (local-ttl=300, since 2026-11-16)
+
+FTL answers Local DNS Records with **TTL 0** by default, so clients never cache them. Here that was about 17k lookups a day, roughly 10% of all queries. Both Pi-holes now set `local-ttl=300` through `misc.dnsmasq_lines`:
+- the primary via `pihole-dns-hosts.yml` (`pihole_dnsmasq_lines`, first entry);
+- DNS 2 via `FTLCONF_misc_dnsmasq_lines` in the iMac compose (first entry).
+
+FTL v6.9 writes no `local-ttl` of its own (check `grep -i ttl /etc/pihole/dnsmasq.conf` after an FTL upgrade; a repeated keyword would stop FTL from starting).
+**Consequences:**
+- A changed or added record can take **up to 5 minutes** to reach a client that already asked. Flush the client's cache, or wait, before calling a new record broken.
+- `dig` on the Pi-hole itself shows the TTL, but test blocking from a CLIENT: queries from loopback aren't blocked.
+- It doesn't affect forwarded names: `*.tail922cee.ts.net` and the Spectrum bypass domains keep their upstream TTLs.
+
 ## Finding devices to name, without router access
 
 Pi-hole's own FTL sqlite database already has every device it has seen making DNS queries — MAC,
