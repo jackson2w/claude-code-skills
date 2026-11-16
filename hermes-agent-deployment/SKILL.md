@@ -848,3 +848,20 @@ and launchers under `<checkout>/.hermes/bin/`. hermes-ansible's `hermes-pm-migra
 `hermes plugins enable <name>` re-syncs the PM venv and reads `/usr/local/lib/hermes-agent/install-stamp.json` (root, 0600). As the `hermes` user it fails "invalid package install stamp — reinstall this application". Run it as root: `env HOME=/home/hermes HERMES_HOME=/home/hermes/.hermes /usr/local/lib/hermes-agent/.hermes/bin/hermes plugins enable <name> --no-allow-tool-override`, then confirm config.yaml is still hermes:hermes.
 
 **Cron safety boundary:** under `approvals.cron_mode: deny`, only commands Hermes's DANGEROUS_PATTERNS flag are blocked. An ssh to a custom dispatch script is never flagged, so it runs. Gate such scripts with a `pre_tool_call` plugin that inspects **both** `terminal` (`command`) and `execute_code` (`code`), because execute_code is often pre-approved.
+
+## Equipping the agent to own a domain: map, casebook, lesson loop (2026-11-15)
+
+Tools and narrow task skills aren't enough for an agent that investigates incidents or plans maintenance.
+Chuka's first acceptance replays missed because he lacked a fact (which devices go through Proton), not
+reasoning. What fixed it, as locked reference skills he reads first (hermes-ansible
+`playbooks/files/homelab-knowledge/`, `hermes-homelab-knowledge-install.yml`):
+- **Map**: hosts, what depends on what, network paths, every watcher/alert with harmless causes and first
+  evidence, standing rules, who owns what. Generated from the planning repo; ~16k chars.
+- **Casebook**: solved incidents as signature / settled by / cause / fix, with the agent's own graded
+  mistakes FIRST. ~20k chars. "A match is a hypothesis, never a conclusion."
+- **Lesson loop**: the agent can't edit its locked skills (by design), so every report ends with
+  "Lesson for the casebook"; the grader folds good lessons and every miss into the casebook and
+  redeploys the same day. A staleness check in the daily queue flags the files when sources move on.
+Gotchas: draft them with agents but verify live (the map draft had the AP channel from a stale memory);
+a "fyi" grade in the exchange never wakes the agent, so grades only teach once they're in a skill.
+
