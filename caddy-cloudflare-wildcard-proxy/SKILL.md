@@ -53,6 +53,27 @@ variable at startup into the journal: the homelab's `ExecStart=caddy run --envir
 `CF_API_TOKEN` 37 times (and so into every PBS backup of the CT). Removed 2026-11-15; check with
 `journalctl -u caddy -o cat | grep -c CF_API_TOKEN=` (count only).
 
+## Rotating the Cloudflare DNS-01 token, with proof before the old one goes (2026-11-16)
+
+Done for Caddy on `caddy` after the old token sat in the journal (from `caddy run --environ`).
+- **Token:** an Account API token with ONE policy: the single zone, **DNS Write + Zone Read**, 1-year expiry, no IP filter. The home WAN IP changes and the 5G failover has another, so an IP filter breaks renewals quietly. One policy avoids Cloudflare's multi-policy edit bug.
+- **Prove it before Caddy uses it** (all with `curl --config -` so the token stays off argv):
+  - `GET /zones?name=<zone>` finds 1 zone;
+  - `GET /accounts/<account.id>/tokens/verify` returns active with the expiry;
+  - POST and then DELETE a `_acme-challenge.tokentest.<zone>` TXT record;
+  - another zone in the account is invisible.
+- **Deploy** with the binary pinned, so only the env file changes and Caddy restarts. Check without printing: the sha256 of the Infisical value equals that of `CF_API_TOKEN` in `/proc/<MainPID>/environ`.
+- **End-to-end proof that leaves the live Caddy alone:** run a throwaway `caddy run` with this global block:
+  - `admin off`
+  - `storage file_system <tmpdir>`
+  - `acme_ca https://acme-staging-v02.api.letsencrypt.org/directory`
+  - `http_port 18080`
+  - `https_port 18443`
+  - `auto_https disable_redirects`
+
+  Give it one site `stg-x.<zone>:18443` with `tls { dns cloudflare {env.CF_API_TOKEN} }`. "certificate obtained successfully" appears in about 30 s. Kill it and remove the tmpdir.
+- **Identify the old token before anyone deletes it:** feed its value (from wherever it leaked or was stored) to `/user/tokens/verify` and to the account verify. That tells you whether it's a *user* token (My Profile) or an account token, plus its id. After Will deletes it, the same call must return "Invalid API Token". If it's still active, the wrong row was deleted.
+
 ## One wildcard cert covering many hostnames
 
 Put every internal hostname in a **single site block** keyed on the apex + wildcard, and route

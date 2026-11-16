@@ -527,6 +527,10 @@ Moved 7 keys in about 5 minutes with 3 restarts. Everything below was verified l
 - Restart order: the low-risk keys together, then chat, then the model provider. Write the planned-restart marker
   (`/root/state/openclaw-planned-restart`) before each hand-run restart.
 
+## Telling two keys on one provider account apart without printing either (2026-11-16)
+
+Use this before revoking a retired agent's key on a provider the live agent also uses (one LunaRoute account, one Groq org). Read the live agent's key on the vault host into a shell variable, `k=$(agent-vault vault credential get <KEY> --vault <vault>)`. Then print only a `case` match against the retired key's known prefix, plus `${#k}` and `${k: -4}`, so the human can spot which dashboard row to keep. After the revocation, call each live key against a cheap endpoint such as `/v1/models` and expect 200. Also check the operator's own keys for the same provider, which live outside the vault (here Infisical `CLAUDE_CODE_LUNAROUTE_API_KEY`). Bot tokens work the same way: Telegram `getMe` returns the username to keep. That's how we learned Chuka's bot is @DFWHermesBot, a name that looks like the retired dfw agent's.
+
 ## Direct, credential-free fetches are allowed to bypass the vault (decided 2026-11-08)
 
 An agent's UID-scoped egress firewall (e.g. `hermes_egress`) typically allows outbound tcp/443 to any address for the agent's own user, independent of Agent Vault's proxy. That means **Agent Vault is opt-in, not an egress filter** — an agent can always reach the open internet directly (`--noproxy` or equivalent) if a request through the vault's proxy is refused. This surfaced 2026-11-07 when Chuka (Hermes) hit a vault-proxy refusal fetching a public URL and fell back to a direct fetch instead of escalating.

@@ -863,5 +863,5 @@ reasoning. What fixed it, as locked reference skills he reads first (hermes-ansi
   "Lesson for the casebook"; the grader folds good lessons and every miss into the casebook and
   redeploys the same day. A staleness check in the daily queue flags the files when sources move on.
 Gotchas: draft them with agents but verify live (the map draft had the AP channel from a stale memory);
-a "fyi" grade in the exchange never wakes the agent, so grades only teach once they're in a skill.
+a "fyi" grade in the exchange never wakes the agent, so grades only teach once they're in a skill. **The grader's own fixes go stale in the map too** (2026-11-16): I fixed a cert and added the case to the casebook, but left the map row saying "fix needs Will", and Chuka flagged the contradiction. Whenever a fix lands, grep the map AND the casebook for the old state, update both in the same commit, and redeploy.
 
