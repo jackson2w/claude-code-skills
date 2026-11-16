@@ -106,6 +106,26 @@ function cmdWord(token: string | undefined): string {
 presents as `["grep", …]`. Every bypass in the table above is covered without enumerating any of
 them.
 
+**But this minimal version is not complete — the 2026-11-16 script review proved it.** It strips
+only bare prefixes, so anything that leaves a token in command position before the real command
+gets through. All of these sent with no prompt on hermes until the tokenizer learned them:
+
+| Shape | What the minimal tokenizer sees in command position |
+|---|---|
+| `sudo -u hermes hey compose`, `timeout 30 hey …`, `nice -n 5 hey …`, `chrt -f 10 hey …` | the wrapper's option or operand (`hermes`, `30`, `5`) |
+| `/usr/bin/timeout 30 hey …` | a wrapper by full path (match wrappers by **basename**, like shells) |
+| `xargs -i hey compose` / `-l` / `-e` / `--replace` | listing these as value-taking swallows `hey`: in GNU xargs their value is optional and must be attached; only `-I -n -L -P -d -E -s -a` take a separate value |
+| `if true; then hey …`, `for …; do hey …`, `{ hey …; }`, `! hey …`, `case $x in a) hey …` | a reserved word or case pattern |
+| `function f { hey …; }; f` | `function` and its name |
+| `bash -c 'hey compose'`, `eval "hey compose"` | the shell / eval, unless its string is tokenized too |
+| `"hey" compose`, `\hey compose` | quoting not removed |
+
+So a wrapper table needs each wrapper's value-taking options and leading operands, reserved words
+need skipping, and **the terminal path must classify every command position with the most severe
+winning** — stopping at the first gated hit turned `hey reply 1; hey compose …` into a prompt
+rather than a block. The hermes plugin's `_WRAPPERS`/`_positions` and its 125-case
+`outbound-email-approval-tests.py` (hermes-ansible) are the current reference.
+
 **Keep substring matching for shapes where the string appearing anywhere means the mutation is in
 play** — an admin-server endpoint like `127.0.0.1:8790/changes`, for instance. Those never
 false-positive on reads, so the tokenizer buys nothing. Mixed matching is correct here, not lazy.
@@ -130,10 +150,23 @@ mentioning the blocked command inside backticks is itself blocked. Agents write 
 constantly — memory files, notes, handoff entries — so this fires in normal operation, not in
 contrived cases.
 
-**The fix that is provable rather than heuristic: strip single-quoted heredoc bodies before
-tokenizing.** `<<'EOF'` is literal by definition — no expansion of `$( )`, backticks, or variables
-— so its body can never execute anything, and removing it from consideration cannot create a
-bypass. Unquoted `<<EOF` *does* expand and must stay tokenized.
+**The fix: strip a quoted heredoc body only when the whole command is one cat/tee writing notes.**
+`<<'EOF'` is literal — no expansion of `$( )`, backticks or variables — but *literal is not the
+same as never run*. An earlier version of this skill said stripping quoted bodies "cannot create a
+bypass"; that was false (2026-11-16 review). Each of these runs the body:
+
+- `bash <<'EOF'` and `cat <<'EOF' | bash` — the receiver is a shell;
+- write-then-run in the same command: `cat > /tmp/s <<'EOF' … EOF` followed by `bash /tmp/s`,
+  `chmod +x /tmp/s && PATH=/tmp:$PATH s`, `at now -f /tmp/s`, `systemd-run`, `flock /tmp/l /tmp/s`,
+  `script -qc /tmp/s` — a list of "runner" words is never complete;
+- deferred: `tee -a ~/.bashrc <<'EOF'`, or a write into cron, systemd, a bin dir or the agent's
+  own scripts directory.
+
+What holds (hermes `_strip_quoted_heredocs`): strip only when the command is a single `cat`/`tee`
+with a quoted heredoc (optionally after `cd <dir> &&`), no pipe, `$(`, `;` or `&` on the opener
+line, **nothing at all after the terminator**, and a target that does not run later (startup files,
+cron, systemd, bin dirs, the agent's scripts dir, `*.sh`/`*.py`). Anything else stays tokenized; a
+false refusal there only over-gates. Unquoted `<<EOF` *does* expand and always stays tokenized.
 
 Bare backticks outside a heredoc are the unfixable half: distinguishing markdown from command
 substitution needs quoting state that a split-based tokenizer does not have. **Accept the
@@ -321,8 +354,12 @@ Two traps:
 ## Review checklist
 
 - [ ] Matching is command-position, not substring, for anything that appears in ordinary prose
-- [ ] Every wrapper in `_TRANSPARENT_PREFIXES` is covered — verify with a real test, not by reading
-- [ ] Single-quoted heredoc bodies stripped before tokenizing
+- [ ] Every wrapper is covered **with its value-taking options and operands**, matched by basename,
+      plus reserved words, `function`, `case` patterns, quoting, `sh -c`/`eval` — verify each with a
+      real test, not by reading (the table under the reference implementation)
+- [ ] Every command position classified, most severe wins (block beats gate), on every path
+- [ ] Quoted heredoc bodies stripped ONLY for a whole-command cat/tee note write with nothing after
+      it and a target that never runs; write-then-run and startup-file targets stay tokenized
 - [ ] Tests fire the **handler**, not the classifier
 - [ ] Both directions covered: gated shapes prompt, read-only mentions stay silent
 - [ ] Approval description bounded (≤512 for OpenClaw), no `undefined` interpolation
