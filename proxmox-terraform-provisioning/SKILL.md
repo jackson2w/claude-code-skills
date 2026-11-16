@@ -446,11 +446,3 @@ Proxmox can resize a running container's memory live (`pct set <id> --memory N` 
 ## Provider upgrade 0.112 → 0.122 (2026-11-15): imported containers show `replicate` drift
 
 bpg 0.122 ("lxc: default rootfs replicate to true") started reading the root disk's `replicate`. Resources written by `terraform import` codegen under the old provider hard-code `replicate = false`, while Proxmox's real value is the default (on: the `rootfs:` line has no `replicate=0`). The plan then wants `replicate true -> false` in place on those containers. Do not apply that: set `replicate = true` in the config so the plan is "No changes". Procedure that worked: read the CHANGELOG breaking sections for every skipped minor; `terraform init -upgrade`; `terraform plan` (never apply first); align config with live where the plan only "corrects" reality; raise `version = "~> X"`; `terraform providers lock -platform=linux_amd64` to rewrite the lock's constraint text (a plain init leaves it stale).
-
-## bpg reboots a running LXC on an in-place memory change (2026-11-16)
-
-Raising `memory.dedicated` on a running container (n8n CT 141, 4096 → 6144, bpg ~0.122) showed up in the
-plan as a plain `~ update in-place`, but the apply ran `vzreboot` with the Terraform token (pve task log:
-`vzreboot:141:terraform@pve!terraform-token`), a few seconds of downtime. `pct set <id> --memory` alone
-would have applied live. For a service that can't blink, either do it in a window, or `pct set` live
-and then change the .tf to match so the plan is empty (backport, never leave drift).
