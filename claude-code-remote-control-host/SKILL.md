@@ -87,7 +87,7 @@ WorkingDirectory=/home/claude/projects/%i
 Environment=HOME=/home/claude
 Environment=PATH=/home/claude/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=LANG=en_US.UTF-8
-ExecStart=/home/claude/.local/bin/claude remote-control --name %i --capacity 4
+ExecStart=/home/claude/.local/bin/claude remote-control --name %i --capacity 8
 StandardOutput=null
 StandardError=journal
 Restart=always
