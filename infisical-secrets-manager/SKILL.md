@@ -416,6 +416,18 @@ Longer-term, per-consumer folders read with `--path` are the real isolation. A d
 cheap guard until then. Every secret at a shared path is readable by every job that wrapper runs, so
 say so when adding one.
 
+## Scoped and on-demand secrets for frequent jobs (2026-11-17)
+
+The full-project injection (`infisical run`, ~63 secrets) still suits daily jobs. For watchers that run every few minutes it meant ~2,600 logins a day, every secret in every child's environment, and the watcher dying whenever Infisical did. On ansible-ctrl there are now three shapes:
+- `infisical-wrapper.sh --only A,B -- cmd`: one login and one `infisical export --format=json`. Only the named values are exported, so the env drops from ~131 to ~19 vars. A missing name fails closed (rc 1).
+- **No wrapper at all**, for jobs that need secrets only to alert. `homelab-report-lib.sh`'s `creds_on_demand` fetches Telegram/Postmark through `infisical-get.sh` on the first send. It never overwrites a set variable and does nothing on hosts without that tool. `claude-send-email.sh` already did the same for Postmark. The hermes watchers do it inline in their own `send_telegram`.
+- `--fallback CRED` (with `--only`), for a job that must survive an Infisical outage (proton-watch). The unit has `LoadCredentialEncrypted=CRED:/etc/credstore.encrypted/CRED.cred`, and the playbook rebuilds that file from Infisical on every run: `printf '%s=%q\n'` piped into `systemd-creds encrypt --name=CRED -`. When the login or fetch fails, the wrapper logs it and sources `$CREDENTIALS_DIRECTORY/CRED`.
+
+Gotchas:
+- In an LXC, `systemd-creds` warns "credential.secret is not located on encrypted media" and works anyway.
+- Test the fallback with a copy of the wrapper whose `INFISICAL_DOMAIN` points at a dead port, run under `systemd-run --wait -p LoadCredentialEncrypted=...`. A plain shell has no `$CREDENTIALS_DIRECTORY`.
+- A job whose own code checks `TELEGRAM_*` up front (wan-failover-watch, agent-peer-watch, the Python watchers) needs those names in `--only`.
+
 ## `secrets get --plain` exits 0 with an empty line for a secret that does not exist
 
 Infisical CLI 0.43.x: `infisical secrets get NAME --plain` for a missing NAME prints an empty line and
