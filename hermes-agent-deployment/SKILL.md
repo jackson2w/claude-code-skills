@@ -865,3 +865,31 @@ reasoning. What fixed it, as locked reference skills he reads first (hermes-ansi
 Gotchas: draft them with agents but verify live (the map draft had the AP channel from a stale memory);
 a "fyi" grade in the exchange never wakes the agent, so grades only teach once they're in a skill. **The grader's own fixes go stale in the map too** (2026-11-16): I fixed a cert and added the case to the casebook, but left the map row saying "fix needs Will", and Chuka flagged the contradiction. Whenever a fix lands, grep the map AND the casebook for the old state, update both in the same commit, and redeploy.
 
+
+## v0.22.5 → v0.23.1 PM→PM update in production (2026-11-17): what the twin didn't show
+
+`hermes-pm-update.yml -e hermes_pm_update=true` took ~9 min on hermes (1 vCPU), not the 25–40 the header
+guessed: stop → tar HERMES_HOME (1.3 GB) → `local` checkout → PM build → config migrate → start → verify.
+Four things to know for the next one:
+
+- **A stale `installs/<id>/.repair-incomplete` (`{"attempts": 3}`).** A `hermes` launch as the service user
+  *during* the build (environment not recorded yet) runs PM's early dependency repair, fails three times, and
+  leaves the marker. Every later launch prints `hermes: automatic dependency repair retry limit reached; run
+  \`hermes pm repair\`` although the finished environment is whole. Check before acting: `pm doctor` **as
+  root** (as hermes it always fails "invalid package install stamp", the stamp is root-only by design), and
+  `hermes_cli._early_recovery._missing_environment(Path(checkout))` → False. Then the marker is safe to
+  remove; the playbook now does exactly that check-then-clear before the start.
+- **`awk … | grep -q` under `set -o pipefail` is a false negative on a big log.** grep -q exits at the first
+  match, awk dies of SIGPIPE (141), pipefail fails the pipeline. The plugin-loaded verify passed right after
+  the update (small log since start) and failed after the reboot (1,900 lines) with every plugin loaded.
+  Match inside awk (`index($0, pat) {f=1; exit} END {exit !f}`). The twin's "one load line missing at first
+  look" was almost certainly this.
+- **v0.23 user plugins log `capability_check plugin=<name> …` on each turn/cron tick**, not a single "loaded"
+  line at boot; the first appears seconds after start (a cron tick), so "since ActiveEnterTimestamp" works.
+- **`hermes mcp test unifi` from the CLI times out (30 s)** — it runs outside the gateway, without the Agent
+  Vault proxy, and hermes_egress allows only the vault. Not a fault. The real check is the gateway's own
+  agent.log: `MCP server 'unifi' (HTTP): registered 55 tool(s)`.
+
+Re-running the update playbook on an already-updated host only verifies (the `done_before` branch), which is
+the cleanest post-reboot check. Docker removal (`hermes-docker-remove.yml`) and the fleet-access skill lock
+(root-owned + `curator lock`) shipped in the same window.

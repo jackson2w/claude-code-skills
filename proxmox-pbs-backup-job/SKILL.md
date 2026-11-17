@@ -369,3 +369,22 @@ in a `trap ... EXIT`-based cleanup, not just an inline `pct stop && pct destroy`
 happy path — a mid-run failure (this Tailscale collision itself, or an SSH blip, or anything else)
 can skip straight past inline cleanup and leave the throwaway container running indefinitely with
 no supervision, which is exactly what compounded the incident above.
+
+## Client-side encryption on an existing PBS storage (done 2026-11-17)
+
+`pvesm set <storage> --encryption-key autogen` writes `/etc/pve/priv/storage/<storage>.enc` (kdf none) and the
+fingerprint into storage.cfg; every vzdump to that storage then runs `--crypt-mode=encrypt --keyfd=…`, and
+`pct restore`/`qmrestore` from it use the key automatically (restore tests need no change). Order that worked:
+
+1. Back up storage.cfg, generate the key, print only `proxmox-backup-client key show <file>` (fingerprint).
+2. **Escrow before the first backup:** `printf 'b64:'; base64 -w0 <file>` piped straight into the secrets
+   store's setter (never argv, never printed); prove it by comparing sha256 of the decoded copy with the file.
+3. One real vzdump of a small guest (log shows `Encrypting backup with key fingerprint`), then a full restore
+   into a throwaway CTID with the network link down, check files, destroy it.
+4. **Keep a copy outside the cluster.** If the secrets store itself runs on the same host and is backed up to
+   the same PBS, losing the host loses both: the offline copy (password manager / paper) is what makes the
+   backups recoverable. Old plain snapshots keep you safe until they age out.
+
+Expect: no dedup between plain and encrypted chunks ("Not reusing previous manifest … different chunk
+encryption mode"), so the datastore and any offsite mirror (rclone to R2/B2 of the chunk store) grow roughly
+2x until the plain snapshots prune. Check capacity first. Verify jobs and GC work without the key.
