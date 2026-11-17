@@ -441,3 +441,9 @@ nothing on stdout, a message on stderr), then print with `jq -r`. That output is
 through argv or a `$( )`. An Ansible pipe lookup on a missing name now fails the task ("returned 4").
 **Anything new that calls the CLI directly needs the same check**; don't test existence by exit code alone.
 
+
+## `infisical-set.sh` flattened multi-line values, and its verification still said "verified" (fixed 2026-11-17)
+
+The old `infisical-set.sh` ran `tr -d '\r\n'` on the input value AND on the read-back before comparing. A multi-line value (a WireGuard `.conf`) was stored as one line, both copies were mangled the same way, and the script reported "set and verified" on a corrupted secret (caught 2026-11-13 with `PROTON1_PREV_CONF`; worked around as `b64:<base64>`). Fixed in hermes-ansible `f76a6ab` (script review S8-08): it strips only trailing newlines and one CR, normalizes both sides identically and losslessly, exits 3 on an embedded line break with a hint to use the `b64:` prefix or the web UI, and validates the name against `^[A-Z][A-Z0-9_]*$`.
+
+**General lesson:** a verify step that normalizes both sides the same lossy way matches even when the stored value is wrong. When the point of the check is to catch corruption, compare raw bytes (or normalize one side only).
