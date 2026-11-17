@@ -385,6 +385,25 @@ fingerprint into storage.cfg; every vzdump to that storage then runs `--crypt-mo
    the same PBS, losing the host loses both: the offline copy (password manager / paper) is what makes the
    backups recoverable. Old plain snapshots keep you safe until they age out.
 
+**Gotcha (found 2026-11-17, the same morning): once a pve storage has an encryption key, pve REFUSES to
+restore every snapshot made before encryption** -- `Error: manifest has no signature, but an encryption key
+is set - refusing to trust a potentially tampered, unsigned backup`, raised while recovering the config, so
+no CT is created. Until each guest has an encrypted backup, `pct restore`/the GUI can restore nothing from
+that storage except the guests already re-backed-up; older plain snapshots stay unrestorable through it for
+as long as they are kept. Plan for it: take one encrypted backup of every guest right after enabling the key
+(or accept the gap until the next nightly run), and for a plain snapshot use a second storage entry for the
+same datastore WITHOUT a key, or `proxmox-backup-client restore --crypt-mode none` by hand. Restore tests
+that pick the latest snapshot pass again once tonight's encrypted backups exist.
+
+**A second pve storage on a PBS replica, for restore tests (2026-11-17).** `pvesm add pbs` logs in to
+validate, so it needs `--password` on argv, and without it on_add_hook deletes the storage's .pw/.enc files.
+To keep the token off argv: write `/etc/pve/priv/storage/<id>.pw` (token secret) and `<id>.enc` (the same key
+file, copied inside /etc/pve/priv) from stdin first, then append the `pbs: <id>` stanza to storage.cfg
+yourself (datastore, server, content backup, encryption-key <fp>, fingerprint, username user@pbs!token).
+A DatastoreReader token gives exactly Datastore.Audit/Read/Verify, which is enough for `pvesm list` and
+`pct restore`. Check effective rights with `/api2/json/access/permissions` and a
+`Authorization: PBSAPIToken=<id>:<secret>` header sent via `curl --config -`.
+
 Expect: no dedup between plain and encrypted chunks ("Not reusing previous manifest … different chunk
 encryption mode"), so the datastore and any offsite mirror (rclone to R2/B2 of the chunk store) grow roughly
 2x until the plain snapshots prune. Check capacity first. Verify jobs and GC work without the key.
