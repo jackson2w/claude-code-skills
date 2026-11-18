@@ -536,3 +536,15 @@ Use this before revoking a retired agent's key on a provider the live agent also
 An agent's UID-scoped egress firewall (e.g. `hermes_egress`) typically allows outbound tcp/443 to any address for the agent's own user, independent of Agent Vault's proxy. That means **Agent Vault is opt-in, not an egress filter** — an agent can always reach the open internet directly (`--noproxy` or equivalent) if a request through the vault's proxy is refused. This surfaced 2026-11-07 when Chuka (Hermes) hit a vault-proxy refusal fetching a public URL and fell back to a direct fetch instead of escalating.
 
 **Rule (Will, 2026-11-08):** public, credential-free reads may go direct. Anything that carries a credential must go through the vault; a vault refusal for a credentialed call goes to Will, not around it. Don't propose closing direct 443 egress as a fix unless Will asks — that option was explicitly declined.
+
+
+## Pinned-binary bump: Ansible `copy` `checksum:` is SHA-1 (2026-11-18)
+
+The first version bump through homelab-ansible's agent-vault-install.yml (0.40.0 → 0.40.2) failed with
+"Copied file does not match the expected checksum": `ansible.builtin.copy`'s `checksum:` option takes a
+**SHA-1**, and the playbook passed the binary's SHA-256. It failed safe (old binary kept, service untouched).
+Verify the extracted binary with `stat` + `checksum_algorithm: sha256` + `failed_when` before the copy and
+drop `checksum:` from copy. A pin backported from a hand upgrade has never exercised its own bump path, so
+expect the first bump to find something. Proof the new vault works: one real call from the agent's
+environment (`hermes chat --oneshot -Q -q` after sourcing gateway.env); the key there is a placeholder, so
+any reply proves injection.
