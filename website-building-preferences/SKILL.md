@@ -81,6 +81,10 @@ description: >-
   excluding assets and the project set to fail open. Don't fake MCP server cards, A2A cards, API catalogs, OAuth
   metadata or DNS-AID records for a site with no API, login or agent. WebMCP: declarative `toolname`/`tooldescription`
   on existing forms; `toolautosubmit` only on read-only ones (search).
+  **Parity is part of the job (Will):** agent files must never say what the pages don't. Derive them from the built
+  pages; mark any remaining fact `[[claim]]`; gate every build with `wj-agent-check.py` and verify the deployed copy with
+  its `--served --settle 600` mode (Pages can serve stale per-URL copies for days and fresh deploys 404 at random edges
+  for minutes). A deleted page may need a Worker 410 (`--gone`) to stop being served.
 - **A whole-site import, learned on Abernathy (2026-11-07; how-to in that repo's CLAUDE.md):** (1) a `foo.json` beside
   `foo.js` in `_data/` shadows it under the same name (keep generated JSON outside `_data/`); (2) Eleventy adds only
   page 1 of a paginated template to collections unless `addAllPagesToCollections: true` (the sitemap silently listed 14
