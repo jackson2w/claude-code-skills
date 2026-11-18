@@ -70,7 +70,7 @@ description: >-
 - **WordPress images: the displayed file is not the original.** Posts often show an edited `-e<timestamp>` or `-WxH`
   copy (701px) while the upload behind it is 2048px; request the base filename and read `media_details` before
   deciding a photo "can't be bigger". Some uploads really are small: search the media library before asking the owner.
-- **schema.org (researched 2026-11-07 for Abernathy; Will chose "do it all"):** worth doing as correctness, not as an AI trick. Google's May 2026 AI-features guide: no special markup for AI Overviews/AI Mode, keep it for rich results. Bing says schema helps Copilot; ChatGPT/Perplexity tests mostly read visible text, so never put a fact only in JSON-LD. Do: build BreadcrumbList from the SAME data as the visible trail (mismatches crept in on 4 page types); author pages = ProfilePage whose Person `@id` the Article.author points at; zoned datePublished/dateModified; Organization full record on home/About only; WebSite alternateName for site names; robots `max-image-preview:large` for Discover. Skip: VideoObject without a watch page, Event for past events, FAQ/QAPage for interviews, SearchAction (sitelinks search box gone), Speakable. Check every page on every build (mockups `scripts/abernathy-check-jsonld.py`); `validator.schema.org/validate` takes a POSTed `url=` for spot checks.
+- **schema.org (researched 2026-11-07 for Abernathy; Will chose "do it all"):** worth doing as correctness, not as an AI trick. Google's May 2026 AI-features guide: no special markup for AI Overviews/AI Mode, keep it for rich results. Bing says schema helps Copilot; ChatGPT/Perplexity tests mostly read visible text, so never put a fact only in JSON-LD. Do: build BreadcrumbList from the SAME data as the visible trail (mismatches crept in on 4 page types); author pages = ProfilePage whose Person `@id` the Article.author points at; zoned datePublished/dateModified; Organization full record on home/About only; WebSite alternateName for site names; robots `max-image-preview:large` for Discover. Skip: VideoObject without a watch page, Event for past events, FAQ/QAPage for interviews, SearchAction (sitelinks search box gone), Speakable. Check every page on every build (mockups `scripts/abernathy-check-jsonld.py`); `validator.schema.org/validate` takes a POSTed `url=` for spot checks. `breadcrumb` is a WebPage property: on a BlogPosting/Article the validator warns, so give the post a WebPage node (mainEntity → the post) that carries it. The validator is Google-hosted and starts answering with a "sorry" 302 captcha after ~15 quick POSTs; space spot checks out.
 - **A whole-site import, learned on Abernathy (2026-11-07; how-to in that repo's CLAUDE.md):** (1) a `foo.json` beside
   `foo.js` in `_data/` shadows it under the same name (keep generated JSON outside `_data/`); (2) Eleventy adds only
   page 1 of a paginated template to collections unless `addAllPagesToCollections: true` (the sitemap silently listed 14
@@ -80,6 +80,20 @@ description: >-
   mimics Pages (redirects, then files, then #fragments) against the WordPress sitemaps; (6) photo encoding is CPU-bound:
   shard it across idle machines (iMac, dfw) with matching sharp/libvips versions, then decode-check every file (killed
   encoders leave truncated files); commit derivatives, since a Pages build can't encode hundreds of photos in time.
+- **Light/dark toggle on a strict-CSP static site (williejackson.com, 2026-11-18; code in mockups `src/js/theme-init.js`,
+  `darkroom.js`, `w4.css`).** A tiny *blocking* `<script src>` at the top of `<head>` applies the saved choice before
+  paint (the CSP allows no inline script; a hash also works). Tokens: dark on `:root`, the light set on
+  `:root[data-theme="light"]`; give any part that must stay dark (a photo lightbox) the dark block too (`:root, .lightbox
+  {…}`), so composite tokens recompute there. The reveal is a View Transition whose `::view-transition-new(root)` gets a
+  `radial-gradient` mask animated with WAAPI from the button (an SVG data-URI mask would need `data:` in img-src). Turn off
+  named view transitions during it (`.theme-vt * { view-transition-name: none !important }`) or those elements cross-fade
+  outside the circle. Update `theme-color`/`color-scheme` metas, listen for `storage` so other tabs follow, honour reduced
+  motion. Offer 2–3 light palettes in a trial bar and contrast-check each against page AND panel colours.
+- **Two underlines on one link misalign (2026-11-18).** A link with a `text-decoration` underline plus a background-image
+  hover line shows two lines on hover: the text underline sits at baseline + offset, the background line at the bottom
+  of the inline box, and the gap grows with the font's descent (5px on a 42px display face). Draw both as background
+  layers at one measured height (`background-position: 0 calc(100% - var(--ul-lift))`, lift measured per font by
+  screenshot row-scan), and keep the resting position exactly where the old underline was.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 
