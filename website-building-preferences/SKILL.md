@@ -129,6 +129,22 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
 
 ---
 
+- **A launch isn't done until the custom domain itself is audited (williejackson.com, 2026-11-18).** Every pre-launch
+  check passed on pages.dev while, on the live domain, the zone's Rocket Loader stopped all site JavaScript under Trusted
+  Types for ~50 minutes; Will's "now that it's live, run a complete audit" found it. Zone settings (Rocket Loader, Email
+  Obfuscation, HTTPS rewrites, Browser Cache TTL, HSTS) act only on the custom domain. Right after a cutover, without being
+  asked: (1) `live-vs-build.py` (every live page byte-for-byte against the build), (2) `live-console.mjs` (console errors
+  and "did the page's own script run" at 1280 and 390), (3) `site-audit.py` on the live origin (it now fails on Cloudflare
+  rewriting), (4) schema vocabulary, feed and old-URL sweeps. Toolkit and notes: `~/projects/sites/mockups/scripts/dev/live/`
+  (README). Build-side defences every site should carry: `data-cfasync="false"` on each `<script src>`, `?v=<hash>` on CSS
+  and JS, `X-Robots-Tag: noindex` for the project's pages.dev hosts (details: `cloudflare-pages-gotchas`).
+- **Validators from this network (2026-11-18).** validator.w3.org/nu throttles after ~40 pages and stays shut: send one
+  page per template, and run `html-structure.py` over the rest. validator.schema.org answers with Google's bot wall:
+  check JSON-LD against the vocabulary file with `schema-vocab.py`. The W3C feed validator and Wikipedia's Citoid API
+  work. Installing a validator binary on dev is blocked by the permission classifier; ask Will first if one is needed.
+- **A hero that is a `<video>` paints its poster as the LCP image (2026-11-18).** A poster can't carry `fetchpriority`
+  or `srcset`: use one WebP poster (a third of the JPEG's bytes; keep the JPEG for JSON-LD `thumbnailUrl`) and add
+  `<link rel="preload" as="image" type="image/webp" fetchpriority="high">` for it on that page only.
 - **Video embeds play in place, never redirect off-site, and match the content column's width (Will, 2026-11-07, Abernathy).** Use a same-page player (YouTube → youtube-nocookie embed, or Vimeo) instead of a thumbnail link to the platform; size the embed frame to equal the article's hero/image width (the container-size technique in the 'Images bigger than the text column' note above applies here too). This generalizes the click-to-play keynote facades already used on williejackson.com's About/Consulting pages — treat it as a standing rule for every site with embedded video, not a one-off for one article.
 
 ## 0. The non-negotiables (read even if you read nothing else)
@@ -321,7 +337,9 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
   `DC.creator` as "Last, First", `DC.date`, `DC.publisher`) plus `<meta name="author">` in **natural order with no degree
   or Jr./II suffix**: on a Cloudflare custom domain Citoid falls back to a scraper that reads only that tag and takes the
   last word as the surname. **Not Highwire `citation_*`**: it makes every post a journal article with no journal, which
-  Wikipedia flags as an error. Test against the real tool, preview *and* live (they took different paths):
+  Wikipedia flags as an error. **`og:title` on an article is its bare title** (no "· Site" suffix; `og:site_name` names
+  the site): on the live domain Citoid takes the title from `og:title` (williejackson.com cited posts as "Title · Willie
+  Jackson" until 2026-11-18). Test against the real tool, preview *and* live (they took different paths):
   `curl https://en.wikipedia.org/api/rest_v1/data/citation/mediawiki/<urlencoded URL>`. Abernathy repo: filters
   `citationName`/`plainName` in `eleventy.config.js`.
 

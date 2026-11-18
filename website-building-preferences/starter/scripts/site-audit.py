@@ -204,6 +204,10 @@ def audit_page(url, preview):
     if lazy_first: L("WARN", "performance/lazy-loading", "first image is lazy (LCP candidate should not be)")
     blocking = [a.get("src") for a, in_head in p.scripts if in_head and a.get("src") and not ({"defer", "async"} & set(a)) and a.get("type") != "module"]
     L("PASS" if not blocking else "FAIL", "performance/script-loading", "no render-blocking scripts" if not blocking else f"blocking: {blocking}")
+    # Zone features that rewrite HTML on a Cloudflare custom domain (never on pages.dev). Under Trusted Types, Rocket
+    # Loader stops every script and Email Obfuscation leaves "[email protected]" (williejackson.com launch, 2026-11-18).
+    rewritten = [n for n, pat in (("Rocket Loader", r'rocket-loader|type="[0-9a-f]+-text/javascript"'), ("Email Obfuscation", r"cdn-cgi/l/email-protection")) if re.search(pat, html)]
+    L("FAIL" if rewritten else "PASS", "resilience/edge-rewriting", f"Cloudflare is rewriting the page: {', '.join(rewritten)} (zone setting; turn it off or add data-cfasync=\"false\" / <!--email_off-->)" if rewritten else "served without Rocket Loader or Email Obfuscation rewriting")
     L("PASS" if any(a.get("type") == "speculationrules" for a, _ in p.scripts) else "INFO", "performance/speculation-rules", "speculation rules present" if any(a.get("type") == "speculationrules" for a, _ in p.scripts) else "none")
     empty = [a["attrs"].get("href", "")[-40:] for a in p.anchors if not (a["text"].strip() or a["img_alt"].strip() or a["attrs"].get("aria-label") or a["attrs"].get("title"))]
     L("PASS" if not empty else "FAIL", "accessibility/empty-links-buttons", f"{len(empty)} links with no accessible text {empty[:3]}")
