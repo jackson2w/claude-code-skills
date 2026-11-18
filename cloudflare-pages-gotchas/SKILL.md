@@ -152,6 +152,26 @@ curl -s -A facebookexternalhit/1.1 -H 'Accept: */*' -o /tmp/og -w '%{content_typ
 The edge cache keys on `Accept`, so a fix is invisible to any already-cached `og:image` URL
 for its `max-age`; change the URL (a different `w=`) when the derivative set changes.
 
+## Deleted pages, fresh deploys and advanced-mode Workers (2026-11-18, williejackson.com)
+
+- **A deleted page can outlive its deploy by a week on the custom domain.** After the deploy without
+  `/visiting-the-pal-jacksons/`, williejackson.com kept answering 200 with the old page (`age` growing,
+  `cache-control: public, s-maxage=604800`, `cf-cache-status: DYNAMIC`) while the new deployment's own URL and any
+  `?query` variant gave 404. Purge-by-URL and **purge everything** on the zone did not clear it: it is Pages' own per-URL
+  cache. Fix that worked at once: an advanced-mode `_worker.js` that answers 410 for the path itself (mockups
+  `scripts/agent/_worker.js`, `GONE` list). Old deployments also keep the file at their hash URLs; delete them via the API
+  (`DELETE …/pages/projects/<p>/deployments/<id>?force=true`) when the content was private.
+- **A fresh deployment URL 404s at random for a few minutes.** Right after `wrangler pages deploy`, parallel fetches of
+  the new `<hash>.<project>.pages.dev` returned scattered 404s (a different set each run); a minute later all 200. Any
+  post-deploy check must retry failures for several minutes before believing them (`wj-agent-check.py --settle 600`).
+- **`_headers` and `_redirects` still apply to `env.ASSETS.fetch()` responses in advanced mode** (verified: CSP and
+  security headers arrive on pages served through `_worker.js`), and Workers headers you `append()` merge with them.
+- **`_routes.json` keeps assets off the Worker** (static requests stay free and unlimited); check the project's
+  `deployment_configs.production.fail_open` via the API (true on both of Will's projects) before putting every page
+  behind a Worker on the free plan: fail open serves the static asset when the 100k/day quota runs out.
+- **Pages serves `.md` as `text/markdown; charset=utf-8`** by default. Cloudflare's zone "Markdown for Agents" needs a
+  Pro plan; on Free, build-time `index.md` twins plus a negotiating `_worker.js` do the same.
+
 ## Related
 
 - `wordpress-static-export`: a WordPress site exported to a Git-integrated Pages project.
