@@ -208,7 +208,10 @@ the real Tailscale Serve URL still works.
   lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
   ```
   Then a **full stop/start cycle of the container itself** — restarting `tailscaled` from inside
-  isn't enough. Symptom without the fix: `journalctl -u tailscaled` shows
+  isn't enough.
+  On Proxmox the `lxc.cgroup2.devices.allow` line turned out to be a no-op for **unprivileged**
+  containers: two unprivileged CTs run kernel-TUN Tailscale with only the mount entry (verified
+  2026-11-18). It matters only for a privileged container. Keeping it is harmless. Symptom without the fix: `journalctl -u tailscaled` shows
   `CreateTUN("tailscale0") failed; /dev/net/tun does not exist`.
 
 - **MagicDNS not registering into systemd-resolved on first pass**: after `tailscale up` +
