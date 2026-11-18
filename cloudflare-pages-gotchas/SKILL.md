@@ -129,6 +129,15 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
   it rewrites every address to `[email protected]` + `/cdn-cgi/l/email-protection` and its decoder sets `innerHTML`,
   which `require-trusted-types-for 'script'` blocks, so addresses never come back (`*.pages.dev` is untouched, so
   previews look fine). Turn it off at launch (Security → Settings), or wrap addresses in `<!--email_off-->…<!--/email_off-->`.
+- **Adding a `_worker.js` silently switches off `functions/` (williejackson.com, 2026-11-18).** Advanced mode runs
+  only the Worker, so every Pages Function stops: the contact form's `functions/contact/send.js` answered 405 for 8
+  hours after a publish added a Markdown-negotiation `_worker.js`, and no check noticed. Move each dynamic route into
+  the Worker the same day, and make the post-deploy check POST to it (empty form → expect the 303 back, sends nothing).
+- **The real Turnstile widget needs Trusted Types off on its page (williejackson.com, 2026-11-18).** Its `api.js` sets a
+  `<script>`'s text, which `require-trusted-types-for 'script'` blocks: no token, every send fails "verify", and on a
+  phone the button seems to do nothing. The always-pass TEST key never runs that code, so preview tests pass. Drop the
+  TT line only on the form pages (`_headers`: `! Content-Security-Policy` then the CSP without it) and test the real key
+  on the real domain; headless browsers get challenged, so the last proof is a person sending one message.
 - **A zone-scoped token's reach.** The homelab's `CF_ZONE_TOKEN` reads DNS, custom firewall rules and
   page rules, but gets "not authorized" for redirect/cache/transform rulesets and "Authentication
   error" for zone settings.
