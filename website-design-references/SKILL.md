@@ -7,9 +7,11 @@ description: >-
   (Andrew Wilkinson's essay site: warm paper and ink, three-serif-family editorial typography,
   62ch measure, drop cap, small-caps eyebrows, paper grain, ink-wipe buttons). Use when building
   or redesigning any website, blog, essay or long-form reading page, personal site, landing page
-  or newsletter page for Will. Trigger phrases include "build me a website", "new site",
+  or newsletter page for Will. Also paulstamatiou.com (light/dark toggle with a circular
+  reveal, sun/moon icon morph, and a catalogue of small animations for a flourish pass). Trigger phrases include "build me a website", "new site",
   "personal site", "blog design", "essay page", "make it look like neverenough", "editorial
-  typography", "reading experience", "the look I like", "design reference".
+  typography", "reading experience", "the look I like", "design reference", "dark mode toggle", "light mode",
+  "theme switch", "paulstamatiou", "flourishes", "micro-interactions".
 ---
 
 # Website design references
@@ -107,3 +109,60 @@ banners with a swallowtail notch (`clip-path`); a tilted rubber-stamp caption wi
 wordmark printed slightly off-register (`text-shadow: .035em .025em 0 red`); a 5px double-rule box for curated
 lists. Other directions mocked and not picked: Margins (Paris Review / Tufte: book spine, ribbon, contents page)
 and Full Bleed (Businessweek / NYT Magazine / The Pudding: colour fields, duotones that return to colour on hover).
+
+## paulstamatiou.com (added 2026-11-18)
+
+Paul Stamatiou's personal site (Head of Design at Sesame). Will: build a light/dark toggle like his, and **catalogue
+his small animations and interactions for a "tweaks, adjustments and flourishes" pass on williejackson.com before it
+goes live**. Measured from the live site 2026-11-18 (HTML, `/assets/globals-*.css`, the JS bundle, Playwright on dev).
+Stack for context: a React SPA (TanStack Router, Tailwind v4, framer-motion), so client-side page changes.
+
+### The theme toggle (built for williejackson.com 2026-11-18, mockups; see its CSS/JS comments)
+- **Before paint:** an inline `<head>` script reads cookie `app-theme=light|dark`; with no cookie it follows
+  `prefers-color-scheme` *and keeps listening* for system changes. Sets `html[data-theme]` and inline `color-scheme`.
+  Cookie (not localStorage) because his pages render on the server.
+- **One button, two states** (no "system" option in the UI). From "system" a press goes to the opposite of the current
+  system mode. Generic label "Toggle light or dark theme". Button: 32px, 70% opacity → full on hover, `hover:scale-105`.
+- **Icon morph (the classic sun/moon mask trick):** one disc masked by a second circle (`moon-cradle`) that sits outside
+  in light and slides across in dark (`translate(20px,-20px)` → `(-5px,2px)`, 0.4s `cubic-bezier(.4,0,.2,1)`), carving a
+  crescent; the disc scales 1.5×; the rays fade, scale 0.8 and turn half a revolution (0.5s). Shows the current mode.
+- **Page change:** `document.startViewTransition`; `::view-transition-new(root)` gets a **feathered circular mask** (an
+  SVG data-URI circle with `feGaussianBlur`), mask-size 0 → 10× the viewport over 800ms from the button's centre; old
+  snapshot stays still underneath. Skipped under reduced motion or without VT support.
+- **Afterglow:** 200ms after a change he sets `html[data-theme-changed]` for 4s, which runs an 11s **shimmer along the
+  borders** of his content containers (a moving gradient on a masked 3px border, fading in and out). Subtle "the
+  lights changed" acknowledgement. Not copied yet: candidate for the flourish pass.
+
+### Palette character
+- **Tinted, not neutral, in both modes:** light is a warm off-white with olive ink; dark is a deep green-black
+  (`--color-body: oklch(18.5% .1 120)`). Selection colour tinted to match (`oklch(25% .075 145)` bg, `85% .1 145` text);
+  `-webkit-tap-highlight-color` tinted too. Text shadow `0 1px 0` white at 75% on light-mode titles (a letterpress lift).
+
+### Motion and interaction catalogue (candidates for the williejackson.com flourish pass)
+Durations cluster at **150ms (colour), 200–300ms (UI), 450–500ms (reveals)**; easings `cubic-bezier(.4,0,.2,1)` and
+`(0,0,.2,1)`; big entrances `cubic-bezier(.22,1,.36,1)`. Reduced motion turns nav transitions off entirely.
+1. **Icon rail nav** (desktop, left): icons at 85% scale grow to 100% on hover; the label slides in from 5px left with
+   opacity (300ms). Current page = white squircle chip with a soft shadow. `corner-shape: squircle` wherever supported.
+2. **Links:** 2px underline offset 2px, decoration at 30% opacity → 50% and text colour shift on hover (150ms).
+3. **Post table of contents as a "minimap" rail** (fixed, right edge, vertically centred): one short tick per heading,
+   ticks sized to the section, the current one darker (`aria-current="location"`); fades and slides in (8px, 300ms)
+   once you scroll past the intro; hover shows the heading name. Plus an inline TOC block at the top of long posts.
+4. **Footnote previews:** hovering a footnote number opens a 22rem tooltip card with the note (clamped to 10 lines) and
+   a "jump to footnote" button; it fades and nudges in (150ms). Positions above/below as space allows.
+5. **Heading anchors:** a "#" appears in the margin on heading hover; clicking copies/links the section.
+6. **Photo sets:** horizontal carousels with prev/next arrows, an "n/6" counter and the caption beneath; buttons in a
+   frosted "liquid glass" style over photos.
+7. **Lightbox:** black field, image scales up from its spot (420ms `cubic-bezier(.22,1,.36,1)`), backdrop fades
+   (300ms), zoom button, arrows, count + caption chip, URL hash per photo (`#photo-<name>`) so a photo is linkable.
+8. **Photo grid cards:** title rises from `translate-y-4` and a small label fades in from blur (filter + opacity +
+   transform, 450ms) on hover.
+9. **Gear cards:** a rounded plate fades in *behind* the item on hover (`::before` opacity, 300ms), not a scale.
+10. **Posts/Favorites tabs** with an underline on the active tab; a live filter input over the posts list.
+11. **Tap feel on phones:** `touch-action: manipulation`, tinted tap highlight, slightly darker pressed state.
+12. Small polish: `text-wrap: balance` on titles and intros, `scrollbar-gutter: stable`, `overscroll-behavior: contain`
+    on popovers, speculation-rules prerender (Cloudflare `Speculation-Rules` header).
+
+### What to take for williejackson.com, in order of value
+1. The toggle (done). 2. Footnote previews, if posts get footnotes. 3. A heading minimap rail on long posts and the
+speaking page. 4. Lightbox polish: grow-from-thumbnail, linkable photo hash. 5. The post-toggle border shimmer, kept
+very quiet. 6. Heading anchors. Skip his icon rail (Will's nav is text) and anything that is image hover zoom (banned).
