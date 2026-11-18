@@ -124,6 +124,15 @@ compare each job's `next_run_at` hour with its expression (jobs.json), and recom
 with `hermes cron edit <id> --schedule "<same expr>"`. That leaves the prompt, skills and delivery
 untouched.
 
+**Changing the host time zone: a running gateway keeps the zone it started with (2026-11-17).**
+After `timedatectl set-timezone`, hermes-gateway (started earlier) kept stamping agent.log/errors.log
+in UTC while new CLI processes stamped Central, so one log mixed both zones until the gateway restarted.
+Any script comparing log stamps with a cutoff must use the writer's zone: restart the gateway right
+after a zone change, and build cutoffs with `date -d` (local), not `date -u`, or a UTC cutoff sits
+hours ahead and the check silently matches nothing (canary-status, stability-check, pm-verify; fixed in
+hermes-ansible 59aca27). `journalctl --since "... UTC"` is zone-proof. Re-check cron `next_run_at`
+the same way as after DST.
+
 No dedup/idempotency built into `cron create` itself — an Ansible task wrapping it needs its own
 `hermes cron list | grep <name>` guard before creating, or a re-run duplicates the job.
 
