@@ -125,6 +125,24 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
 - **Speed settings that fight a strict CSP:** Rocket Loader rewrites every script and injects its own (breaks Trusted
   Types); keep it off. Cloudflare Fonts only rewrites Google Fonts links (no-op for self-hosted fonts). Web Analytics
   in "JS snippet" mode injects nothing: count `beacon.min.js` per page to rule out double counting.
+- **Rocket Loader was on for williejackson.com and nobody had checked (2026-11-18): no site JavaScript ran on the
+  live domain for ~50 minutes after launch.** It retypes every `<script>` (`type="<hex>-text/javascript"`) and runs
+  them by setting a script's text, which `require-trusted-types-for 'script'` blocks. Pages without Trusted Types kept
+  working, which hid it. Zone features never run on `*.pages.dev`, so every preview check and served check passed.
+  Defences, both in the site's own code so a dashboard toggle can't break it: `data-cfasync="false"` on every
+  `<script src>` (Rocket Loader then skips them and injects nothing), and a deploy step that fetches the custom domain
+  and fails on `rocket-loader`, `cdn-cgi/l/email-protection` or a retyped script (mockups `scripts/wj-preview-deploy.sh`).
+  **After any cutover to a custom domain: crawl the custom domain and `cmp` each page with the build, and load pages
+  in a browser reading the console.** On williejackson.com that diff showed exactly three zone features: Rocket
+  Loader, Email Obfuscation, Automatic HTTPS Rewrites (it rewrote the Dublin Core namespace `http://purl.org/...`).
+- **Fingerprint CSS and JS when the zone has a Browser Cache TTL (2026-11-18).** The zone told browsers to keep
+  `/css/w4.css` for 31 days while HTML stays fresh, so returning visitors would pair new HTML with a month-old
+  stylesheet. Add `?v=<content hash>` at build (Cloudflare's cache key includes the query string), fail the build on an
+  unversioned reference, then `Cache-Control: public, max-age=31536000, immutable` on `/css/*` and `/js/*` is safe.
+  Unversioned images keep the zone's month: rename a photo you replace.
+- **The project's `*.pages.dev` hosts serve the same indexable site.** Keep them out of search from `_headers`:
+  `https://<project>.pages.dev/*` and `https://:deploy.<project>.pages.dev/*`, each with `X-Robots-Tag: noindex`
+  (host rules work; the custom domain is unaffected, verified).
 - **Email Address Obfuscation (Scrape Shield, ON by default) breaks under Trusted Types.** On a proxied custom domain
   it rewrites every address to `[email protected]` + `/cdn-cgi/l/email-protection` and its decoder sets `innerHTML`,
   which `require-trusted-types-for 'script'` blocks, so addresses never come back (`*.pages.dev` is untouched, so
