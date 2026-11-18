@@ -108,6 +108,13 @@ description: >-
   of the inline box, and the gap grows with the font's descent (5px on a 42px display face). Draw both as background
   layers at one measured height (`background-position: 0 calc(100% - var(--ul-lift))`, lift measured per font by
   screenshot row-scan), and keep the resting position exactly where the old underline was.
+- **Image search audit (2026-11-18, both sites).** Crawl the served site (every sitemap page) for: alt present and specific,
+  width/height, AVIF/WebP with a JPEG `src` (the URL Google indexes), og:image + og:image:alt + twitter:image:alt, robots
+  `max-image-preview:large` at launch (and no X-Robots-Tag noindex left on image files), and, in a real browser at phone and
+  desktop width, any `loading="lazy"` image that is on screen at first paint (a hero-less post's lead photo is the usual
+  case: make it eager). Article JSON-LD wants 16:9, 4:3 and 1:1 images (Google's Article guide): crop them at build from the
+  original with the share image's focal point, never upscale, and look at every square on a contact sheet (about 1 in 30
+  cut a face). Not worth doing: renaming image files, image sitemaps when every image is a plain `<img>`.
 - Reference sites and measured values: `website-design-references` skill. Where a reference site
   uses something §7 bans (neverenough.com's cream paper, small-caps eyebrows), this document wins.
 
