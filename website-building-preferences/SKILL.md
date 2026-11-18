@@ -71,6 +71,16 @@ description: >-
   copy (701px) while the upload behind it is 2048px; request the base filename and read `media_details` before
   deciding a photo "can't be bigger". Some uploads really are small: search the media library before asking the owner.
 - **schema.org (researched 2026-11-07 for Abernathy; Will chose "do it all"):** worth doing as correctness, not as an AI trick. Google's May 2026 AI-features guide: no special markup for AI Overviews/AI Mode, keep it for rich results. Bing says schema helps Copilot; ChatGPT/Perplexity tests mostly read visible text, so never put a fact only in JSON-LD. Do: build BreadcrumbList from the SAME data as the visible trail (mismatches crept in on 4 page types); author pages = ProfilePage whose Person `@id` the Article.author points at; zoned datePublished/dateModified; Organization full record on home/About only; WebSite alternateName for site names; robots `max-image-preview:large` for Discover. Skip: VideoObject without a watch page, Event for past events, FAQ/QAPage for interviews, SearchAction (sitelinks search box gone), Speakable. Check every page on every build (mockups `scripts/abernathy-check-jsonld.py`); `validator.schema.org/validate` takes a POSTed `url=` for spot checks. `breadcrumb` is a WebPage property: on a BlogPosting/Article the validator warns, so give the post a WebPage node (mainEntity → the post) that carries it. The validator is Google-hosted and starts answering with a "sorry" 302 captcha after ~15 quick POSTs; space spot checks out.
+- **Agent readiness (isitagentready.com, williejackson.com 2026-11-18, Will: "resolve everything you can").** Scan with
+  `curl -X POST https://isitagentready.com/api/scan -d '{"url":…}' -H content-type:application/json` (full check list:
+  its `/llms-full.txt`). Level 4 of 5 is the honest ceiling for a content site: robots `Content-Signal` (ai-train is
+  the owner's call: ask), sitemap, RFC 8288 `Link` headers on `/` (describedby → llms.txt and the skills index,
+  alternate → index.md), Markdown negotiation, an Agent Skills index (a real skill, e.g. "how to book him"), an ARD
+  `/.well-known/ai-catalog.json`. Cloudflare's own Markdown for Agents needs a Pro zone; on Free use the Pages
+  `_worker.js` + build-time `index.md` twins in the mockups repo's `scripts/agent/` (reuse it), with `_routes.json`
+  excluding assets and the project set to fail open. Don't fake MCP server cards, A2A cards, API catalogs, OAuth
+  metadata or DNS-AID records for a site with no API, login or agent. WebMCP: declarative `toolname`/`tooldescription`
+  on existing forms; `toolautosubmit` only on read-only ones (search).
 - **A whole-site import, learned on Abernathy (2026-11-07; how-to in that repo's CLAUDE.md):** (1) a `foo.json` beside
   `foo.js` in `_data/` shadows it under the same name (keep generated JSON outside `_data/`); (2) Eleventy adds only
   page 1 of a paginated template to collections unless `addAllPagesToCollections: true` (the sitemap silently listed 14
