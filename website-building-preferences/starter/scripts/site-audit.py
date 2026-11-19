@@ -101,6 +101,9 @@ def audit_site(base, preview):
     if "preload" in hsts or "includesubdomains" in hsts.lower(): rec("INFO", "security/hsts", "includeSubDomains/preload set: confirm it was Will's per-domain decision")
     csp = h.get("content-security-policy", "")
     rec("PASS" if csp else "WARN", "security/content-security-policy", (csp[:90] + "…") if len(csp) > 90 else (csp or "missing"))
+    # A template that HTML-escapes the policy ('self' -> &#39;self&#39;) ships a header browsers can't parse: every
+    # source is then blocked (j2wtalent 2026-11-19: fonts, icons and manifest refused, while this check said PASS).
+    if re.search(r"&#\d+;|&quot;|&amp;", csp): rec("FAIL", "security/content-security-policy", "policy is HTML-escaped (&#39; etc.): browsers can't parse it")
     fa = "frame-ancestors" in csp or h.get("x-frame-options", "").upper() in ("DENY", "SAMEORIGIN")
     rec("PASS" if fa else "FAIL", "security/frame-ancestors", "frame-ancestors in CSP" if "frame-ancestors" in csp else (h.get("x-frame-options") or "missing"))
     rec("PASS" if h.get("x-content-type-options", "").lower() == "nosniff" else "FAIL", "security/x-content-type-options", h.get("x-content-type-options", "missing"))
