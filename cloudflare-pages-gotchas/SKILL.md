@@ -143,6 +143,17 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
 - **The project's `*.pages.dev` hosts serve the same indexable site.** Keep them out of search from `_headers`:
   `https://<project>.pages.dev/*` and `https://:deploy.<project>.pages.dev/*`, each with `X-Robots-Tag: noindex`
   (host rules work; the custom domain is unaffected, verified).
+- **Watch the custom domain against the project's own pages.dev host (2026-11-19, homelab-ansible
+  `scripts/wj-site-watch.py`).** Both serve the same deployment, and zone features run only on the custom domain, so
+  every page fetched from both must be byte-identical: any difference is Cloudflare changing pages (Rocket Loader, Email
+  Obfuscation, minify, Automatic HTTPS Rewrites). Make the build emit what the zone would rewrite (an `http://purl.org`
+  link differed until the source used https), and recheck once before calling a difference real (a deploy can land
+  mid-run). No build artefact is needed, so it runs anywhere on a timer.
+- **Hiding a rollback project from search without breaking the rollback (2026-11-19).** Put `X-Robots-Tag` in
+  `_headers` under host rules (`https://<project>.pages.dev/*` and `https://:sub.<project>.pages.dev/*`, which covers
+  branch aliases and new deployment hashes; verified). Never `<meta name="robots">`: it would deindex the real domain the
+  moment it moves back. Keep robots.txt open so crawlers can see the noindex. Older deployment hashes keep their old
+  headers (deployments are immutable).
 - **Email Address Obfuscation (Scrape Shield, ON by default) breaks under Trusted Types.** On a proxied custom domain
   it rewrites every address to `[email protected]` + `/cdn-cgi/l/email-protection` and its decoder sets `innerHTML`,
   which `require-trusted-types-for 'script'` blocks, so addresses never come back (`*.pages.dev` is untouched, so
