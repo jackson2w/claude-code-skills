@@ -166,3 +166,22 @@ Durations cluster at **150ms (colour), 200–300ms (UI), 450–500ms (reveals)**
 1. The toggle (done). 2. Footnote previews, if posts get footnotes. 3. A heading minimap rail on long posts and the
 speaking page. 4. Lightbox polish: grow-from-thumbnail, linkable photo hash. 5. The post-toggle border shimmer, kept
 very quiet. 6. Heading anchors. Skip his icon rail (Will's nav is text) and anything that is image hover zoom (banned).
+
+
+## What reads as AI-made, and darkroom references (researched 2026-11-19 for the williejackson.com flourish pass)
+- **Published "AI tell" lists to check proposals against:** Anthropic's frontend-design skill
+  (github.com/anthropics/skills, skills/frontend-design): fade-and-slide-up entrances on every section, hover
+  transitions on every card, tinted near-black + one accent + mono data labels ("template chrome"), all-caps eyebrows,
+  "→" on links; its advice is "one orchestrated moment" drawn from the subject's own materials. impeccable.style/slop:
+  pulsing dots, marquees, bounce easing, radial halos/soft spotlights, glowing accents on dark mode, gradient text,
+  italic serif display headlines. OpenAI's GPT-5.4 frontend guide: no cards by default, in-situ photography, 2–3
+  intentional motions. A dark + gold + mono site sits near these clusters, so distinctiveness has to come from the
+  site's own metaphor (for Darkroom: developing prints, safelight, enlarger, contact sheets), not more palette.
+- **jasonbergh.com** (Blacklead Studio; Codrops 2026-02-20): the closest "darkroom" relative: film-edge lines that
+  persist across pages via sessionStorage, stepped moving grain (noise PNG, color-dodge), video grows from the click
+  point, effects cut back on slow connections.
+- **paco.me:** several noise SVGs at different baseFrequency (0.75 grain, 0.05 paper mottle); progressive blur.
+- **Shadows:** joshwcomeau.com/css/designing-shadows: one light source, same x:y ratio, layered, tinted to the
+  background hue. Never animate letter-spacing in an entrance (it reflows: CLS).
+- **CSP note:** strict style-src blocks style attributes but not CSSOM (`el.style.setProperty`), so pointer-driven
+  custom properties and per-navigation `viewTransitionName` (pageswap/pagereveal) need no generated classes.
