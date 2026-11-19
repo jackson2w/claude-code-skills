@@ -168,7 +168,12 @@ def audit_page(url, preview):
     if og["image"]:
         if not og["image"].startswith("https://"): L("FAIL", "foundations/open-graph", f"og:image not absolute: {og['image']}")
         else:
-            si, ih, ib, _ = fetch(og["image"], headers={"Accept-Encoding": "identity"})
+            # A preview's og:image names the production host (absolute URLs are built from site.url): fetch the same
+            # path from the preview instead, or a pre-launch site fails on a file the old site doesn't have (2026-11-19).
+            img = og["image"]
+            if preview:
+                u = urllib.parse.urlparse(url); img = f"{u.scheme}://{u.netloc}" + urllib.parse.urlparse(img).path
+            si, ih, ib, _ = fetch(img, headers={"Accept-Encoding": "identity"})
             kind, dims = image_size(ib[:65536]) if si == 200 else ("none", None)
             ok = si == 200 and kind in ("jpeg", "png") and dims and dims[0] >= 1200 and dims[1] >= 630
             L("PASS" if ok else "FAIL", "foundations/open-graph", f"og:image {si} {kind} {dims} (want JPG/PNG >= 1200x630)")
@@ -240,6 +245,9 @@ def main():
     if locs and all(l.endswith(".xml") for l in locs):  # a sitemap index: take pages from its first child sitemaps
         kids = locs; locs = []
         for k in kids[:3]: locs += re.findall(r"<loc>([^<]+)</loc>", get_text(k)[2])
+    # Sitemap URLs name the production host; on a preview, audit the same paths on the preview, not the live site
+    # (j2wtalent 2026-11-19: the old live site's pages were audited instead of the rebuild).
+    locs = [base + urllib.parse.urlparse(l).path if not l.endswith(".xml") else l for l in locs] if a.preview else locs
     print(f"== page: {base}/"); links = audit_page(base + "/", a.preview)
     if not locs:  # no sitemap (e.g. a preview): follow the homepage's own links
         locs = [l for l in dict.fromkeys(links) if l.startswith(base + "/") and "#" not in l
