@@ -398,7 +398,8 @@ cache headers on asset paths only. The set (Will's decisions 2026-11-05):
   `style=""`; each third party is added deliberately and tested on a branch deploy first)
 - `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
   `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()`,
-  `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-site` (share images: `cross-origin`)
+  `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-site` (share images: `cross-origin`),
+  `X-Permitted-Cross-Domain-Policies: none` (added 2026-11-18 after an ssl.org scan of williejackson.com)
 - **Caching stays off until launch** (Will, 2026-11-05, refining the 10-23 hold): `site.launched` turns on immutable
   caching for `/css/*` (fingerprinted by the `fp` filter), `/fonts/*`, `/img/*`. Never `X-XSS-Protection` (spec: avoid).
 (A `/*.html` rule does not match 11ty's pretty URLs like `/about/`, so don't use one.)
