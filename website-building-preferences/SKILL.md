@@ -138,6 +138,18 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
   rewriting), (4) schema vocabulary, feed and old-URL sweeps. Toolkit and notes: `~/projects/sites/mockups/scripts/dev/live/`
   (README). Build-side defences every site should carry: `data-cfasync="false"` on each `<script src>`, `?v=<hash>` on CSS
   and JS, `X-Robots-Tag: noindex` for the project's pages.dev hosts (details: `cloudflare-pages-gotchas`).
+- **Chuka tests every live site from outside, as part of shipping (Will, 2026-11-18).** After every production
+  deploy (the next 15:00 CT; many deploys in a day = one test) and once a month (each site's `monthly_day`), he runs
+  an external test from hermes: transport, DNS, every sitemap page, markup and JSON-LD, PageSpeed, headers and
+  exposure, agent files, site specifics. Sites: williejackson.com, abernathymagazine.com, j2wtalent.com, listed in
+  homelab-ansible `playbooks/files/chuka-site-tests/sites.json` (what each site is, private paths checked by status
+  only, forms he must never submit, and `known`: what has already been judged). **A new site joins that file at
+  launch** (redeploy homelab-report-timers.yml; its first test goes out at the next 15:00, or
+  `systemctl start chuka-site-test.service` on ansible-ctrl for now). The 16:00 analysis grades his reply; findings
+  reach my daily queue: verify each against the site before acting (his 11-18 run had one false positive), fix the
+  minor ones, take DNS and anything outward-facing to Will, and add settled items to `known` so he doesn't re-report
+  them. One site a day, one model turn: keep each site's brief under 9,000 bytes. Code: `scripts/chuka-site-test.py`,
+  `chuka-duties.sh --sites`.
 - **Validators from this network (2026-11-18).** validator.w3.org/nu throttles after ~40 pages and stays shut: send one
   page per template, and run `html-structure.py` over the rest. validator.schema.org answers with Google's bot wall:
   check JSON-LD against the vocabulary file with `schema-vocab.py`. The W3C feed validator and Wikipedia's Citoid API
