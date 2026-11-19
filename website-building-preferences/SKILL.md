@@ -141,7 +141,7 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
 - **Validators from this network (2026-11-18).** validator.w3.org/nu throttles after ~40 pages and stays shut: send one
   page per template, and run `html-structure.py` over the rest. validator.schema.org answers with Google's bot wall:
   check JSON-LD against the vocabulary file with `schema-vocab.py`. The W3C feed validator and Wikipedia's Citoid API
-  work. Installing a validator binary on dev is blocked by the permission classifier; ask Will first if one is needed.
+  work. The W3C checker itself is installed on dev (`~/tools/vnu`, 2026-11-19): validate a whole crawled site in one local pass.
 - **A hero that is a `<video>` paints its poster as the LCP image (2026-11-18).** A poster can't carry `fetchpriority`
   or `srcset`: use one WebP poster (a third of the JPEG's bytes; keep the JPEG for JSON-LD `thumbnailUrl`) and add
   `<link rel="preload" as="image" type="image/webp" fetchpriority="high">` for it on that page only.
