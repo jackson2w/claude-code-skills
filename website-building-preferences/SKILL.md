@@ -135,7 +135,10 @@ Will's site entity name is **"Willie Jackson"** (structured data, author fields,
   Obfuscation, HTTPS rewrites, Browser Cache TTL, HSTS) act only on the custom domain. Right after a cutover, without being
   asked: (1) `live-vs-build.py` (every live page byte-for-byte against the build), (2) `live-console.mjs` (console errors
   and "did the page's own script run" at 1280 and 390), (3) `site-audit.py` on the live origin (it now fails on Cloudflare
-  rewriting), (4) schema vocabulary, feed and old-URL sweeps. Toolkit and notes: `~/projects/sites/mockups/scripts/dev/live/`
+  rewriting), (4) schema vocabulary, feed and old-URL sweeps. Two zone-only traps seen twice now (williejackson.com 11-18, j2wtalent.com 11-19):
+  Email Address Obfuscation rewrites `mailto:` links and its decoder dies under Trusted Types (fix in the page with
+  `<!--email_off-->…<!--/email_off-->`, no dashboard access needed), and a zone with Web Analytics on injects the beacon
+  even when `site.analyticsToken` is empty: the privacy page must then disclose it. Toolkit and notes: `~/projects/sites/mockups/scripts/dev/live/`
   (README). Build-side defences every site should carry: `data-cfasync="false"` on each `<script src>`, `?v=<hash>` on CSS
   and JS, `X-Robots-Tag: noindex` for the project's pages.dev hosts (details: `cloudflare-pages-gotchas`).
 - **Chuka tests every live site from outside, as part of shipping (Will, 2026-11-18).** After every production
