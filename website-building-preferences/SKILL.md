@@ -62,6 +62,11 @@ description: >-
   container, not against its neighbours: twice Will found, on his phone, a byline divider touching the red name
   underline above it (an inline-block's `border-left` is as tall as the whole line box). When a layout stacks a
   divider under an underline, measure the gap (`byline-gap.mjs`); give the divider a text-height line box.
+- **Meta descriptions: measure pixels, not characters (2026-11-20).** Google cuts the desktop snippet at about
+  920px of 14px Arial, so "≤160 characters" is not enough: williejackson.com's 160-char home description measured
+  1,009px and Will saw it cut off ("…communication drive"). Measure with a canvas `measureText` at `14px Arial` and
+  keep each description ≤ ~900px (often 130-145 characters), with the key words first. Re-check post descriptions
+  that were only trimmed to ≤160.
 - **Images bigger than the text column under a strict CSP (2026-11-07).** To break a photo out to a wider sibling's
   width, make the wide parent a size container (`container-type: inline-size`) and use `100cqw` with a negative
   margin of `(100% - 100cqw) / 2`; verify the edges equal the sibling's. A frame sized from the photo (`fit-content`,
