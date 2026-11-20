@@ -286,3 +286,17 @@ flip-flops with it: after each upgrade the weekly `ansible_check` shows drift, a
 grafana-server only to loosen permissions. Write them `owner: root, group: grafana, mode: '0640'`
 (`grafana-alerting.yml`, fixed 2026-10-06 after the 13.2.3 upgrade on 10-01). That is also right for
 `contactpoints.yaml`, which carries the bot token.
+
+## Proving a new alert rule fires without paging anyone (2026-11-20)
+
+Give the rule a label (e.g. `netprobe_test: '1'`) and add a first notification-policy route on that label to a
+contact point that delivers nowhere (a `webhook` to `http://127.0.0.1:9/`). The rule evaluates and fires
+normally; watch its state with `/api/prometheus/grafana/api/v1/rules` and confirm the log shows
+`Notify for alerts failed ... test-sink` (not Telegram). A read-only service-account token cannot create
+silences (403), so this route is the way. **Remove the label only after the rule is back to inactive:**
+a rule whose condition looks back over a window (`avg_over_time(...[15m])`) stays firing for that long
+after the test ends, and removing the label while it fires sends a real notification.
+
+Also learned: a rule built on a probe's gauges only works if the probe writes metrics when it FAILS. A
+probe killed by its unit timeout leaves the last good values in the textfile, so "failing" never fires;
+test the total-outage case, not only a partial one.

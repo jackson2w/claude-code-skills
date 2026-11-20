@@ -414,3 +414,12 @@ Two concrete habits from this:
 **When the same defect is dispatched to both agents, the close-out has to go to both.** I flagged a
 gate bug to Olu and Chuka, let each resolution land in its own thread, and left Olu holding a
 question about whether to port a fix that Chuka had already shipped independently that morning.
+
+## One-sided topics never archive under a "both sides done" rule (2026-11-20)
+
+A topic only one side writes in (a notice, a plan answered in a separate topic) has no second state file,
+so a "both sides report done" archiver can never move it; on hermes 23 piled up in two months, plus 24
+two-sided topics where one side never set done. Fix used: archive a topic when the other side's folder
+does not exist at all (nothing of theirs can be unread, which is what the ack guard protects), the one
+side says done, and it has been quiet N days; a later reply simply opens a fresh topic. And close your
+own side as part of sending a notice, not later.

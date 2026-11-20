@@ -138,3 +138,16 @@ canary first, stops at the first unhealthy host; `-e include_pve=true` for step 
 VMs (Home Assistant, PBS, Infisical) do restart with pve but have their own kernels, so check their
 own reboot-required too. Tell the user up front that the pve reboot takes DNS, Home Assistant and
 everything on it down for a few minutes, and agree the timing first.
+
+## Trying a new kernel once on a Proxmox host with systemd-boot (2026-11-20)
+
+To boot a new kernel **once** with a guaranteed fallback, use the boot loader's one-shot EFI variable:
+`proxmox-boot-tool kernel pin <current>` (keep the old default), install the new kernel, then
+`bootctl set-oneshot proxmox-<new>-pve.conf` and check `bootctl status` shows `OneShot Entry`. systemd-boot
+consumes it at boot, so **any** later boot (a crash + power cycle included) returns to the default.
+Don't use `proxmox-boot-tool kernel pin <new> --next-boot` for this: after a refresh it writes the new
+kernel as the ESPs' `loader.conf` default and relies on a cleanup service late in boot to undo it, so a
+kernel that dies before that service runs keeps booting on every power cycle. After the boot, confirm
+`uname -r`, that `bootctl status` no longer lists a OneShot entry, and that the ESP default is unchanged.
+If the session doing this runs in a guest on that host, schedule the post-boot checks (a timed
+reminder) before rebooting.

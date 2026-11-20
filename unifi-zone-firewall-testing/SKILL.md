@@ -467,3 +467,22 @@ afterwards.
 - `stat/health` `vpn.remote_user_enabled` can still read true right after the One-Click VPN is disabled; trust the networkconf read-back and recheck later.
 - Auto-created objects to audit on a new console: a `UniFi Identity` WPA-Enterprise SSID broadcasting on both bands, and a `One-Click VPN` remote-user WireGuard server, both enabled with 0 users.
 - **`rest/user?mac=<mac>` ignores the filter** and returns every known client; taking `data[0]` renames whoever is first (it renamed the Mac mini on 10-17, reverted within a minute). Fetch `rest/user`, select by exact `mac` locally, assert exactly one match, then `PUT rest/user/<_id> {"name": ...}` and read back by MAC.
+
+## DNS redirect (DNAT) on the resolver's own subnet breaks: hairpin (2026-11-19)
+
+A UniFi `DNAT` "force DNS" rule works on VLANs that are a different subnet from the resolver, and
+**fails on the resolver's own subnet**. Trusted host 192.168.50.x → `@8.8.8.8` gets rewritten to
+Pi-hole 192.168.50.53, but Pi-hole replies straight to the client over L2 from `.53`; the reply
+never crosses the gateway to be un-NATed, the client expects 8.8.8.8, and every query times out
+(UDP and TCP). Worse than no rule. Fixes: hairpin masquerade for the redirected flows (the resolver
+then sees the gateway, not the device, for those queries), or a zone policy blocking the subnet's
+`:53` to the internet with the resolvers as excepted sources. Also: exclude the resolvers' own
+`:53` traffic (e.g. forwards to the gateway) from any redirect, or lookups loop; on one filter field,
+`destination NOT <the LAN CIDR>` does that for a same-subnet rule.
+
+**Testing an empty VLAN without touching the host's routing:** put the VLAN interface in a network
+namespace on a host whose switch port trunks VLANs:
+`ip netns add t40; ip link add link enp3s0f0 name vl40 type vlan id 40; ip link set vl40 netns t40;`
+then inside the namespace: lo up, vl40 up, a static address + default route via the VLAN gateway,
+and run `dig` with `ip netns exec t40`. `ip netns del t40` removes it all. The host's own routes and
+services (here: the household's DNS 2) never change.

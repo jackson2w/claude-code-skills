@@ -241,6 +241,14 @@ timeout (n8n's dependency tree is large) — confirmed both 2026-07-31 (2.29.10�
 2026-08-16 (2.34.5→2.34.6). Run it backgrounded/with a longer timeout up front rather than
 letting the first attempt time out.
 
+**npm 11+ skips dependency install scripts by default** (seen 2026-11-20, npm 11.19, n8n 2.48.4): the
+install ends with `npm warn install-scripts ... Run npm install -g --allow-scripts=...`, naming `sqlite3`
+and `isolated-vm` among others. n8n still worked, because both ship prebuilt binaries in the tarball
+(`sqlite3/build/Release/node_sqlite3.node`, `isolated-vm/prebuilds/linux-x64`). Prove it before the
+restart rather than assuming: as the service user, `node -e` a tiny query through `require('sqlite3')`
+(open `:memory:`, `select sqlite_version()`) and run one script in an `isolated-vm` Isolate. If either
+fails, re-run with `--allow-scripts=<those names>` before restarting.
+
 Then bump the `n8n_version` var in the playbook and commit — it won't retroactively apply
 anything, it only affects what a fresh host build installs. Document this asymmetry in a
 comment next to the `creates:` guard itself, since it's easy for a future edit to assume
