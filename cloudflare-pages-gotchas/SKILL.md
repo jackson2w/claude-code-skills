@@ -143,6 +143,13 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
 - **The project's `*.pages.dev` hosts serve the same indexable site.** Keep them out of search from `_headers`:
   `https://<project>.pages.dev/*` and `https://:deploy.<project>.pages.dev/*`, each with `X-Robots-Tag: noindex`
   (host rules work; the custom domain is unaffected, verified).
+- **noindex alone doesn't get an already-indexed pages.dev host out of results (j2wtalent, 2026-11-20).** The production
+  host carried noindex + a canonical to the custom domain for 17 days and still ranked 7th for Will's name: noindex
+  waits for a recrawl and passes no credit. Once the custom domain is live, 301 the exact production host instead:
+  `functions/_middleware.js` (`if (url.hostname === "<project>.pages.dev") Response.redirect(custom + path, 301)`,
+  else `next()`), plus `public/_routes.json` excluding static paths so only page requests invoke Functions. Previews
+  (`<x>.<project>.pages.dev`) are untouched. Cloudflare's documented way is a Bulk Redirect, which our CF tokens can't
+  create (no Account Rulesets / Filter Lists permission). On a `_worker.js` project, put the same check in the Worker.
 - **Watch the custom domain against the project's own pages.dev host (2026-11-19, homelab-ansible
   `scripts/wj-site-watch.py`).** Both serve the same deployment, and zone features run only on the custom domain, so
   every page fetched from both must be byte-identical: any difference is Cloudflare changing pages (Rocket Loader, Email
