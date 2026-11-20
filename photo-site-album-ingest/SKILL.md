@@ -92,6 +92,13 @@ Albums are public by default; a password is a separate `cred:<slug>` KV key via
 
 ## 4. Review the square crops before pushing
 
+> **Photostream redesign (branch `photostream`, preview 2026-11-19, launches on Will's go):** once
+> merged, the grid shows every photo uncropped (build-time masonry), so square crops only feed the
+> RSS feed and nothing on the site; the crop review shrinks to checking the 3:2 cover on `/albums/`.
+> Ingest also carries hand-written `caption`/`alt` fields across re-runs (captions are not displayed;
+> Will dropped them). Check `git log main` for the merge before skipping this step. Memory:
+> `project_photo_site_photostream`.
+
 The album grid is square thumbnails cut by sharp's saliency crop, and it beheads people
 regularly: 2 of 3 on the class photos, 1 of 8 plus one tight head on the holiday shoot. Pull
 every thumbnail into one sheet and look at it:
