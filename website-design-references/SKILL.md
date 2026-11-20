@@ -162,6 +162,30 @@ Durations cluster at **150ms (colour), 200–300ms (UI), 450–500ms (reveals)**
 12. Small polish: `text-wrap: balance` on titles and intros, `scrollbar-gutter: stable`, `overscroll-behavior: contain`
     on popovers, speculation-rules prerender (Cloudflare `Speculation-Rules` header).
 
+### The photostream (`/photostream`, `/photo/<id>`; measured 2026-11-19 for photos.jackson2w.com)
+Will asked for this rebuilt as photos.jackson2w.com (decisions: memory `project_photo_site_photostream`).
+- **Grid:** pure black, full bleed, 4px gutters, **masonry (shortest column), uncropped**, newest first. Columns
+  1 / 2 ≥640 / 3 ≥1024 / 4 ≥1800. Positions are computed at render and written as CSS custom properties in `cqw`
+  units per breakpoint (`--pf-t2`, `--pf-l2`, `--pf-hgt2`, grid height as `max()` of per-column sums) on an
+  `@container`, so there's no JS layout and no CLS. Each `<img>` carries a 24×16 WebP LQIP as an inline
+  background-image. No captions, no hover effect in the grid. 30 cards per page, IntersectionObserver loads more.
+- **Header:** two frosted "liquid glass" pills, fixed: back arrow (40px circle) top-left, centred title pill.
+  Glass = `rgba(0,0,0,.28)` + `backdrop-filter: blur(14px) saturate(150%)` + a 135° white sheen gradient + inset
+  1px highlights + `0 4px 14px -6px` drop. Title pill opens an **about card**; the feed **recedes** behind it
+  (scale .95, radius ~22px, `.39s cubic-bezier(.23,.88,.26,.92)`, iOS-sheet feel), the card scales in from 1.1.
+- **Open a photo:** the tile grows from its grid rect to the full-screen fit (`.42s cubic-bezier(.22,1,.36,1)`);
+  back reverses into the tile. Photo pages are a horizontal pager with neighbours preloaded; drag with pointer
+  events, commit at 50% width or 400px/s flick, spring (damping 38, stiffness 420); `touch-action: pinch-zoom`.
+  Keys: ←/↑ newer, →/↓ older, Esc back to the grid. Pages more photos in when within 20 of either end.
+- **Details pill:** monospace date ("Sep 10th") + chevron; expands (grid-rows 0fr→1fr, chevron flips with an
+  overshoot `cubic-bezier(.3,1.18,.6,1)` 360ms) into a glass card: caption (markdown-lite: links, bold, italic),
+  rule, then camera (→ gear page), lens, place (→ place stream), each row blurring in (`blur(5px)`, opacity 0,
+  `translateY(-4px)`) staggered. No exposure values, no download, no share.
+- **Routes:** `/photostream/<place>` is a filtered stream with its own title/OG. OG image is a 1600px JPEG.
+- Stack: React SSR (TanStack), images through Cloudflare `cdn-cgi/image` widths 480–3000, `format=auto`,
+  `metadata=none`. A static 11ty build reproduces all of it: build-time masonry, cross-document View Transitions
+  for the grow, vanilla pointer-event pager.
+
 ### What to take for williejackson.com, in order of value
 1. The toggle (done). 2. Footnote previews, if posts get footnotes. 3. A heading minimap rail on long posts and the
 speaking page. 4. Lightbox polish: grow-from-thumbnail, linkable photo hash. 5. The post-toggle border shimmer, kept
