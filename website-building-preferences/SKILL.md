@@ -336,6 +336,24 @@ GRT values are the **max-viewport** sizes. Generate Utopia `clamp()` steps so th
   `reference_lighthouse_on_claude_code_host` (the PSI API needs a key)
 
 ## 9. SEO and sharing
+- **Previews never in search; one indexable host (Will, 2026-11-20). Checklist item for every site we build,
+  checked at the first preview and again at launch:**
+  1. *Every* preview, mockup and demo answers `X-Robots-Tag: noindex` (header, not just meta) and its robots.txt
+     disallows all. The starter does this until `site.launched`. A mockup project (wj-site-mockups, …) sends it always.
+  2. At launch, the project's own **`<project>.pages.dev` 301s to the domain**, path kept
+     (`starter/functions/_middleware.js`). Cloudflare marks only *preview* deployments noindex, never that host, so
+     without the redirect it is an indexable copy: Google ranked j2wstrategies-com.pages.dev for Will's name, and
+     abernathymagazine.pages.dev and patrickljackson-mockups.pages.dev were indexable until 2026-11-20. Noindex alone
+     isn't enough on a live site: it drops the copy but passes no credit to the domain.
+  3. The www/apex twin and http 301 to the canonical host **in one hop**; the slash/no-slash twin of a page redirects.
+  4. Every page's canonical is **its own production URL** (absolute, on the real domain, even on a preview), `og:url`
+     equals it, and the sitemap lists only those URLs, each answering 200 with no redirect.
+  5. Migrations: every old URL (the old sitemap, WordPress `?p=` ids, feeds, categories) lands on a live page in one
+     hop (`_redirects`).
+  6. Prove it: `site-audit.py <preview> --preview` FAILs a preview page without noindex; after launch,
+     `site-audit.py <domain> --alias <project>.pages.dev [--old-urls file]` checks items 2–5. The account-wide guard
+     (`pages-index-guard`, homelab-ansible, daily) re-checks every Pages project's hosts, and Chuka's weekly SEO brief
+     reads Search Console's indexed URLs and Google-chosen canonicals for anything that slipped through.
 - Every page: description (150–160 chars), canonical (absolute), and the full share set: `og:site_name`, `og:type`
   (`article` for posts), `og:title`, `og:description`, `og:url` (= canonical), `og:image` + `og:image:type`/`width`/
   `height`/`alt`, `twitter:card = summary_large_image`. All URLs **absolute**. `starter/src/_includes/head.njk` does it.

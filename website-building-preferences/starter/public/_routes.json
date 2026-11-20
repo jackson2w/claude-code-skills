@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "description": "Only page requests run functions/_middleware.js (the pages.dev redirect); static files never invoke it. Add any other static folders here.",
+  "include": ["/*"],
+  "exclude": ["/css/*", "/fonts/*", "/img/*", "/icons/*", "/js/*", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png"]
+}

@@ -7,7 +7,8 @@ passed `site-audit.py` with 90 checks, 0 real failures.
 
 ## Use it
 
-1. Copy `src/`, `scripts/`, `eleventy.config.js` and `.gitignore` into the new repo (merge into existing files).
+1. Copy `src/`, `scripts/`, `functions/`, `public/`, `eleventy.config.js` and `.gitignore` into the new repo (merge into
+   existing files).
    ```
    npm i -D -E @11ty/eleventy@3.1.7 @11ty/eleventy-plugin-rss@2.0.4 @11ty/eleventy-img@7.1.1 subset-font@2.9.0 @capsizecss/unpack@4.0.1 @capsizecss/metrics@4.4.0
    ```
@@ -40,6 +41,7 @@ passed `site-audit.py` with 90 checks, 0 real failures.
 | `_includes/head.njk` | charset, viewport, title, description, canonical, meta robots (pre-launch), theme-color, color-scheme, favicons + manifest, feed discovery, Open Graph + X card (absolute URLs, 1200×630, alt), speculation rules |
 | `_includes/jsonld.njk` | structured data: WebSite + Person/Organization, BlogPosting, WebPage/CollectionPage, BreadcrumbList, cross-linked by `@id` |
 | `_includes/base.njk` | `lang`, skip link, `header`/`main`/`footer` landmarks, fingerprinted CSS |
+| `functions/_middleware.js` + `public/_routes.json` | after launch, the project's `<project>.pages.dev` 301s to the domain (set `CANONICAL`); previews pass through |
 | `_headers.njk` | HSTS (2 years, no preload), strict CSP with Trusted Types, frame-ancestors + X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP/CORP (share images exempt), noindex before launch, caching after launch |
 | `robots.txt.njk` | pre-launch: disallow all. Launched: AI training bots blocked, AI search bots allowed, `Content-Signal: search=yes, ai-input=yes, ai-train=no`, Sitemap line |
 | `sitemap.xml.njk`, `llms.txt.njk`, `site.webmanifest.njk`, `404.njk` | XML sitemap, llms.txt, PWA manifest, a real 404 with the site's own layout |
@@ -72,6 +74,10 @@ deploy with a browser console check before production (Abernathy 2026-11-05 did 
 
 - `launched: true` in `site.js`. That removes noindex (meta and header), opens robots.txt with the AI policy and
   Sitemap line, and turns on asset caching (CSS is fingerprinted; never replace an image or font in place: rename it).
+- **One indexable host** (Will, 2026-11-20): set `CANONICAL` in `functions/_middleware.js` to the domain, so the
+  project's own `<project>.pages.dev` 301s there (Cloudflare marks only preview deployments noindex, never that
+  host). Redirect the www/apex twin in one hop (zone redirect rule), and for a migration list every old URL in
+  `_redirects` (one hop, to a live page). Prove it all with the audit's `--alias` and `--old-urls` below.
 - **Privacy page** (Required): `src/privacy.njk`, linked from `footer.njk`. Will approved its facts 2026-11-05
   (publisher Willie Jackson, contact security@jackson2w.com, no postal address; no cookies, ads or tracking; Cloudflare
   hosting and cookieless Web Analytics). The analytics paragraph appears only when `site.analyticsToken` is set. If a
@@ -91,9 +97,11 @@ deploy with a browser console check before production (Abernathy 2026-11-05 did 
 
 ```
 python3 scripts/site-audit.py https://<preview>.pages.dev --preview        # before launch
-python3 scripts/site-audit.py https://<domain>                             # after launch
+python3 scripts/site-audit.py https://<domain> --alias <project>.pages.dev [--old-urls old-paths.txt]   # after launch
 python3 scripts/site-audit.py https://<domain> --path /some/page/ --path /other/
 ```
 
 Exit code 1 means a FAIL. Branch preview addresses (`<branch>.<project>.pages.dev`) always get Cloudflare's own
-`X-Robots-Tag: noindex`; run the launched audit against production.
+`X-Robots-Tag: noindex`; run the launched audit against production. `--preview` FAILs any page without noindex;
+the launched run checks each canonical is the page's own production URL, the slash/no-slash twin redirects, the
+www/apex twin and every `--alias` 301 to the same path, and the sitemap's URLs all answer 200 with no redirect.

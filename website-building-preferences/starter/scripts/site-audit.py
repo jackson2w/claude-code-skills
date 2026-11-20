@@ -2,6 +2,13 @@
 """site-audit.py: check a DEPLOYED site against Will's ship standard (specification.website, adopted 2026-11-05).
 
   python3 site-audit.py https://example.com [--preview] [--pages N] [--path /a/ --path /b/]
+                        [--alias project.pages.dev] [--sitemap-check N] [--old-urls FILE]
+
+Search-engine hygiene (Will, 2026-11-20: "demo and preview sites aren't going to show up in search engine results"):
+every preview page must say noindex; on a launched site there is ONE indexable host: the other www/apex variant and
+each --alias (the Pages project's own <project>.pages.dev, which Cloudflare does NOT mark noindex) must 301 to the same
+path, every page's canonical is its own production URL, sitemap URLs answer 200 with no redirect, and each old URL in
+--old-urls (one path per line, optional expected target after a space) lands on a live page in one hop.
 
 Checks site-wide files and headers, then each page (homepage + up to N pages from the sitemap or homepage links).
 Each line: PASS / FAIL / WARN / INFO plus the spec slug it comes from. Exit code 1 if any FAIL.
@@ -162,8 +169,30 @@ def audit_page(url, preview):
     L("PASS" if d and 50 <= len(d[0]) <= 170 else "WARN", "foundations/meta-description", f"{len(d[0]) if d else 0} chars")
     canon = [l.get("href") for l in p.links if (l.get("rel") or "").lower() == "canonical"]
     L("PASS" if canon and canon[0].startswith("https://") else "WARN", "foundations/canonical-url", canon[0] if canon else "missing")
+    if len(canon) > 1: L("FAIL", "foundations/canonical-url", f"{len(canon)} canonical links")
+    if canon:
+        cu, fu = urllib.parse.urlparse(canon[0]), urllib.parse.urlparse(final)
+        if cu.path != fu.path:
+            L("FAIL", "seo/canonical-self", f"canonical names another page: {canon[0]} (this is {fu.path})")
+        elif preview and (cu.netloc == fu.netloc or cu.netloc.endswith(".pages.dev")):
+            L("WARN", "seo/canonical-self", f"canonical names a preview host {cu.netloc}: point it at production")
+        elif not preview and cu.netloc != fu.netloc:
+            L("FAIL", "seo/canonical-self", f"canonical host {cu.netloc} is not the site's host {fu.netloc}")
+        else: L("PASS", "seo/canonical-self", "canonical is this page's production URL")
+    if not preview and final.split("#")[0] != url.split("#")[0]:
+        L("FAIL", "seo/one-hop", f"{url} redirected to {final}: link and list the final URL")
     robots = " ".join(p.meta("name", "robots")).lower()
     if "noindex" in robots: L("INFO" if preview else "FAIL", "seo/meta-robots", f"meta robots {robots}")
+    if preview:
+        xr = h.get("x-robots-tag", "").lower()
+        L("PASS" if "noindex" in xr or "noindex" in robots else "FAIL", "seo/preview-noindex",
+          "noindex (" + ("header" if "noindex" in xr else "meta") + ")" if "noindex" in xr or "noindex" in robots else "a preview page search engines may index: send X-Robots-Tag noindex")
+    elif path != "/":
+        alt = path[:-1] if path.endswith("/") else path + "/"
+        s2, h2, _, _ = fetch(urllib.parse.urljoin(url, alt), method="HEAD", follow=False)
+        loc = urllib.parse.urljoin(url, h2.get("location", ""))
+        L("PASS" if s2 in (301, 308) and loc.rstrip("/") == final.rstrip("/") or s2 == 404 else "WARN", "seo/duplicate-urls",
+          f"{alt} answers {s2}" + (f" -> {h2.get('location')}" if h2.get("location") else "") + (" (a duplicate of this page)" if s2 == 200 else ""))
     og = {k: (p.meta("property", "og:" + k) or [""])[0] for k in ("title", "description", "url", "type", "image", "image:alt", "image:width", "image:height", "site_name")}
     missing = [k for k in ("title", "description", "url", "type", "image") if not og[k]]
     L("PASS" if not missing else "FAIL", "foundations/open-graph", "complete" if not missing else f"missing og:{', og:'.join(missing)}")
@@ -232,14 +261,62 @@ def audit_page(url, preview):
         if tag not in html: L("WARN", "accessibility/semantic-html", f"no {tag}>")
     return [urllib.parse.urljoin(url, a["attrs"].get("href", "")) for a in p.anchors]
 
+def no_follow(url):
+    s, h, _, _ = fetch(url, method="HEAD", follow=False)
+    return s, (urllib.parse.urljoin(url, h["location"]) if h.get("location") else ""), h
+
+def audit_indexing(base, preview, aliases, locs, limit, old_urls):
+    """One indexable host, previews noindex, sitemap and old URLs one hop (Will, 2026-11-20)."""
+    host = urllib.parse.urlparse(base).netloc
+    if preview:
+        for a in aliases: rec("INFO", "seo/one-host", f"--alias {a} ignored on a preview")
+        return
+    other = host[4:] if host.startswith("www.") else "www." + host
+    s, loc, _ = no_follow(f"https://{other}/")
+    if s == 0: rec("INFO", "seo/one-host", f"{other} does not answer (fine: nothing to index)")
+    else: rec("PASS" if s in (301, 308) and loc.rstrip("/") == base else "FAIL", "seo/one-host", f"https://{other}/ answers {s}" + (f" -> {loc}" if loc else " (a second indexable copy)"))
+    for a in aliases:
+        probe = "/" + (urllib.parse.urlparse(locs[1]).path.lstrip("/") if len(locs) > 1 else "")
+        s, loc, h = no_follow(f"https://{a}{probe}")
+        want = base + probe
+        if s in (301, 308) and loc.rstrip("/") == want.rstrip("/"): rec("PASS", "seo/one-host", f"{a}{probe} -> {loc}")
+        elif "noindex" in h.get("x-robots-tag", "").lower(): rec("WARN", "seo/one-host", f"{a} is noindex but not redirected: a 301 passes credit to {host}, noindex doesn't")
+        elif s in (301, 308): rec("FAIL", "seo/one-host", f"{a}{probe} answers {s} -> {loc}, not {want}")
+        else: rec("FAIL", "seo/one-host", f"{a}{probe} answers {s}: an indexable copy of the site (301 it: starter functions/_middleware.js)")
+    if not aliases: rec("WARN", "seo/one-host", "no --alias given: name the Pages project's <project>.pages.dev so it is checked")
+    pages = [l for l in locs if not l.endswith(".xml")][:limit]
+    if pages:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(4) as ex: res = list(ex.map(lambda u: (u, no_follow(u)), pages))
+        off = [u for u in pages if urllib.parse.urlparse(u).netloc != host]
+        bad = [f"{urllib.parse.urlparse(u).path} {r[0]}" for u, r in res if r[0] != 200]
+        rec("PASS" if not bad and not off else "FAIL", "seo/xml-sitemaps", f"{len(pages)} sitemap URLs answer 200 with no redirect" if not bad and not off else f"{len(bad)} not 200 {bad[:5]}, {len(off)} on another host {off[:2]}")
+    if old_urls:
+        bad, n = [], 0
+        for line in open(old_urls):
+            parts = line.split()
+            if not parts or parts[0].startswith("#"): continue
+            n += 1; u = urllib.parse.urljoin(base + "/", parts[0])
+            s, loc, _ = no_follow(u)
+            if s in (301, 308):
+                s2, _, _ = no_follow(loc)
+                ok = s2 == 200 and (len(parts) < 2 or loc.rstrip("/") == urllib.parse.urljoin(base + "/", parts[1]).rstrip("/"))
+            else: ok = s == 200 and len(parts) < 2
+            if not ok: bad.append(f"{parts[0]} {s}{' -> ' + loc if loc else ''}")
+        rec("PASS" if not bad else "FAIL", "seo/old-urls", f"{n} old URLs land on a live page in one hop" if not bad else f"{len(bad)}/{n} don't: {bad[:5]}")
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("url"); ap.add_argument("--preview", action="store_true")
     ap.add_argument("--pages", type=int, default=6); ap.add_argument("--path", action="append", default=[])
+    ap.add_argument("--alias", action="append", default=[], help="another host serving this site (e.g. project.pages.dev): must 301 here")
+    ap.add_argument("--sitemap-check", type=int, default=300, help="sitemap URLs to check for 200-without-redirect (0 = skip)")
+    ap.add_argument("--old-urls", help="file of old paths (optional expected target after a space): each must land live in one hop")
     a = ap.parse_args(); base = a.url.rstrip("/")
     print(f"== site: {base}" + (" (preview)" if a.preview else ""))
     audit_site(base, a.preview)
     if a.path:
         for u in [base + "/"] + [base + p for p in a.path]: print(f"== page: {u}"); audit_page(u, a.preview)
+        print("== indexing"); audit_indexing(base, a.preview, a.alias, [], 0, a.old_urls)
         return summary()
     locs = []
     for p in ("/sitemap.xml", "/sitemap-index.xml"):
@@ -256,6 +333,7 @@ def main():
         locs = [l for l in dict.fromkeys(links) if l.startswith(base + "/") and "#" not in l
                 and not re.search(r"\.(xml|txt|jpg|png|webp|avif|svg|pdf|js|css|ico|webmanifest)$", l)]
     for u in [l for l in locs if l.rstrip("/") != base][:a.pages]: print(f"== page: {u}"); audit_page(u, a.preview)
+    print("== indexing"); audit_indexing(base, a.preview, a.alias, locs, a.sitemap_check, a.old_urls)
     return summary()
 
 def summary():
