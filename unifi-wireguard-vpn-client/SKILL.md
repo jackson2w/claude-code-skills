@@ -31,6 +31,12 @@ a watcher (`proton-watch.py`, homelab-ansible) that fails over between tunnels. 
    untrimmed UDP (WhatsApp media over QUIC) just vanished. Fix: interface MTU 1400. Test per tunnel
    from a host whose traffic a probe route sends through it: `ping -M do -s N <probe-ip>` (lost above
    the MTU = as configured) and `-M dont` (large replies inbound).
+   **Then size it for the WORST WAN, not the primary (2026-11-21):** on a UniFi 5G backup (U5G, carried
+   as `gre1`) the GRE header costs 24 bytes, so the largest DF ping through a 1400-MTU tunnel fell 1372 →
+   1348 and full-size packets vanished: one tunnel crawled (4–6 s per HTTPS fetch, PMTU black-hole
+   recovery), two timed out, while Spectrum looked perfect. Fix: MTU 1360 on every client. Prove it with
+   `unifi-wan-drill run --hold 150` (self-restoring WAN swap) and change one tunnel first, so the others
+   are the control on the same path in the same minute.
 2. **Probe passes, some sites stall (provider routing, transient).** The tunnel reached Cloudflare
    fine while DataCamp/DigitalOcean sites stalled for ~20 min. A Cloudflare-only probe can't see it:
    probe 2+ non-Cloudflare echo services per tunnel too ("reach" checks) and call the tunnel DEGRADED
