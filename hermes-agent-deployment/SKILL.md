@@ -902,3 +902,9 @@ Four things to know for the next one:
 Re-running the update playbook on an already-updated host only verifies (the `done_before` branch), which is
 the cleanest post-reboot check. Docker removal (`hermes-docker-remove.yml`) and the fleet-access skill lock
 (root-owned + `curator lock`) shipped in the same window.
+
+## Long-lived chat sessions: context management (v0.23, 2026-11-21)
+- Core no longer resets gateway chats on a timer (v2026.9.11, 1d5d059410): a Telegram DM is one session until /new, and `session_reset` is inert (startup/doctor warn). The catalog plugin `hermes-session-reset-policy` restores idle/daily resets through the /new funnel (memory saved first, never mid-turn). Hermes's own docs: a never-ending session defeats memory (read at session start, distilled at session end).
+- Failure shape: a rare, huge, inline compaction mid-turn. On a slow provider it hits `compression.context_total_ceiling_seconds` (600), "continues without compression", then sits over threshold in a 300 s cooldown. Fix by making compaction small, early and background: `compression.proactive_prune_tokens` (no-LLM prune of old tool results; try 48000), `compression.threshold_tokens` (absolute cap; min with the ratio), `compression.prepare_ahead: true` (background summary spliced at the trigger).
+- `idle_compact_after_seconds` is live-TUI-only; it never fires on gateway chats.
+- `hermes plugins install` as the hermes user fails "pm-runtime: invalid package install stamp" (the PM stamp is root-only). Fetch the plugin with git at a pinned commit and run `plugins enable` as root with `/usr/local/lib/hermes-agent/.hermes/bin/hermes` (HOME/HERMES_HOME set), then chown config.yaml back.
