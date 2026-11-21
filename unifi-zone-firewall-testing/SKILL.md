@@ -480,6 +480,14 @@ then sees the gateway, not the device, for those queries), or a zone policy bloc
 `:53` traffic (e.g. forwards to the gateway) from any redirect, or lookups loop; on one filter field,
 `destination NOT <the LAN CIDR>` does that for a same-subnet rule.
 
+**The block fix (applied 2026-11-20) breaks servers that query authoritative nameservers
+themselves.** Excepting the resolvers isn't enough: ACME DNS-01 clients check propagation by asking
+the zone's own NS on `:53` directly (Caddy/certmagic does unless `resolvers` is set in the `tls`
+block; certbot/lego plugins have similar options). Before any `:53` egress block, grep the fleet for
+DNS-01/ACME and other direct-to-authoritative clients, then test from each one:
+`dig +time=3 SOA <zone> @<an NS IP>` should still answer, or that client needs a resolver setting.
+The failure is silent until the next renewal, weeks later.
+
 **Testing an empty VLAN without touching the host's routing:** put the VLAN interface in a network
 namespace on a host whose switch port trunks VLANs:
 `ip netns add t40; ip link add link enp3s0f0 name vl40 type vlan id 40; ip link set vl40 netns t40;`
