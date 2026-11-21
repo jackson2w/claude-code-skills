@@ -487,6 +487,13 @@ block; certbot/lego plugins have similar options). Before any `:53` egress block
 DNS-01/ACME and other direct-to-authoritative clients, then test from each one:
 `dig +time=3 SOA <zone> @<an NS IP>` should still answer, or that client needs a resolver setting.
 The failure is silent until the next renewal, weeks later.
+Pointing the check at the LAN resolvers is NOT enough on its own: the client's pre-creation zone
+lookup caches NXDOMAIN for the challenge name for the zone's negative TTL (Cloudflare: 1800 s), so
+every check sees "missing" until the 2-minute timeout. Caddy fix that worked (staging-proven
+2026-11-21): `resolvers <lan dns>` + `propagation_delay 60s` + `propagation_timeout -1` (skip the
+self-check; the CA validates against the authoritative servers itself). Prove it with a throwaway
+staging instance (`acme_ca` staging, own `storage`, `admin off`, other ports, a test name), once
+without the fix as a negative control.
 
 **Testing an empty VLAN without touching the host's routing:** put the VLAN interface in a network
 namespace on a host whose switch port trunks VLANs:
