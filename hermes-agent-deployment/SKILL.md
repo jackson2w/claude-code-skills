@@ -908,3 +908,10 @@ the cleanest post-reboot check. Docker removal (`hermes-docker-remove.yml`) and 
 - Failure shape: a rare, huge, inline compaction mid-turn. On a slow provider it hits `compression.context_total_ceiling_seconds` (600), "continues without compression", then sits over threshold in a 300 s cooldown. Fix by making compaction small, early and background: `compression.proactive_prune_tokens` (no-LLM prune of old tool results; try 48000), `compression.threshold_tokens` (absolute cap; min with the ratio), `compression.prepare_ahead: true` (background summary spliced at the trigger).
 - `idle_compact_after_seconds` is live-TUI-only; it never fires on gateway chats.
 - `hermes plugins install` as the hermes user fails "pm-runtime: invalid package install stamp" (the PM stamp is root-only). Fetch the plugin with git at a pinned commit and run `plugins enable` as root with `/usr/local/lib/hermes-agent/.hermes/bin/hermes` (HOME/HERMES_HOME set), then chown config.yaml back.
+
+## Config mechanics learned in the 2026-11-21 review (v0.23.1)
+- `hermes config set` parses the value as YAML, so a flow list (`'["a","b"]'`) writes a real list; `config get` prints it as a block, so compare lists by parsing config.yaml, not by string.
+- Disable skills with `skills.disabled: [names]` (also `skills.platform_disabled.<platform>`); there is no `hermes skills disable`. `config get` warns "not a recognized config key" for it, but the loader reads it: check `hermes skills list` (shows N enabled, M disabled).
+- Per-platform toolsets: `hermes tools disable --platform telegram computer_use image_gen tts`.
+- Cron runs refuse flagged commands outright (`approvals.cron_mode: deny`): `python -c`, `bash -c/-lc`, heredocs into interpreters, `rm -r`, `execute_code`. Running a script file (`bash ~/scratch/x.sh`, `python3 x.py`) is not flagged. Test a shape with `tools.approval_detection.detect_dangerous_command(cmd)` in the Hermes venv before writing advice.
+- Logs worth reading for a review: `~/.hermes/logs/errors.log*` (weeks), `agent.log*` (per-call `in= out= latency= cache=`, ~1 day per 5 MB file). Count, don't read content.
