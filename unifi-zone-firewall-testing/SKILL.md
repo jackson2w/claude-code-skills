@@ -1,6 +1,6 @@
 ---
 name: unifi-zone-firewall-testing
-description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh", "secondary WAN DNS leaks around Pi-hole", "failover bypasses DNS filter", "wan_dns_preference per WAN entry", "U5G DNS not manual", "DNS redirect works but clients get no answer", "destination's own firewall blocks redirected VLAN", "Pi-hole local nftables allow-list missing subnet", "DNAT and zone policy pass but service still unreachable", "reorder firewall policies API", "batch-reorder", "move rule above block UniFi", "hit counter moved after reorder", "FirewallPolicyCreateRespondTrafficPolicyNotAllowed", "allow one host through an outbound block", "exception above a block rule", "narrow allow rule port 853".
+description: This skill should be used when testing or verifying UniFi zone-based firewall policies between VLANs, when a ping to a gateway address seems to prove an inter-VLAN policy works, when deciding whether a "blocked" result is a firewall rule or a sleeping device, when a UniFi API write returns HTTP 200 and rc "ok" but the value does not persist, when planning a UniFi cutover and wanting before/after evidence, or when a Guest network appears isolated but has not actually been tested from inside it. Trigger phrases include "test VLAN isolation", "tagged VLAN interface for testing", "SO_BINDTODEVICE no route", "curl --interface blocked", "policy hits counter empty", "last_hit never", "tailscale subnet route breaks my test", "disable the policy to prove it", "index 10000 predefined 2147483647", "test VLAN isolation", "verify firewall policy UniFi", "Trusted to IoT blocked", "guest network isolation test", "UniFi API silently discards", "unifi 200 rc ok not persisted", "inter-VLAN ping works but", "policy matrix before after cutover", "bc_filter_enabled", "mDNS filtering per network", "port_overrides native_networkconf_id", "UniFi zone default block", "deadman revert", "dead man switch network change", "schedule the undo before the change", "renumber the management subnet safely", "locked out of the UniFi controller", "doh state off", "is DNS over HTTPS enabled UniFi", "rest/setting key doh", "secondary WAN DNS leaks around Pi-hole", "failover bypasses DNS filter", "wan_dns_preference per WAN entry", "U5G DNS not manual", "DNS redirect works but clients get no answer", "destination's own firewall blocks redirected VLAN", "Pi-hole local nftables allow-list missing subnet", "DNAT and zone policy pass but service still unreachable", "reorder firewall policies API", "batch-reorder", "move rule above block UniFi", "hit counter moved after reorder", "FirewallPolicyCreateRespondTrafficPolicyNotAllowed", "allow one host through an outbound block", "exception above a block rule", "narrow allow rule port 853", "which device is hitting this rule", "rule logging flow history", "unifi-fw log", "firewall rule logging useless", "last_hit timestamp", "blocked DNS hits unknown device".
 ---
 
 # Testing UniFi zone firewall policies so the results mean something
@@ -182,8 +182,27 @@ five of its policies had matched thousands of packets.
 matching packets at that moment — proven by toggling it. Missing instrumentation, not missing
 traffic.
 
-`last_hit` is worse: several policies report a real `hits` count alongside `last_hit: never`.
-Read `hits`; treat `last_hit` as decorative.
+`last_hit` is uneven: several policies report a real `hits` count alongside `last_hit: never`.
+**Where it IS populated it is exact and useful** (2026-11-21, UniFi Network 10.x, a custom
+Internal→External block): ms epoch, matching a deliberate test packet to the second. Trust it
+on a rule once a test packet has moved it; never trust its absence.
+
+## Who is hitting a block rule? Not the flow history, and not rule logging (2026-11-21)
+
+The traffic-flows API records blocks for only some policies (QUIC and IoT-to-Gateway blocks show
+there; Guest-to-Trusted with 10k hits and a custom `Trusted :53` block never do), and the
+policy's `logging` flag does **not** change that. The flag writes to the gateway syslog, which you
+can't read without device SSH. Before blaming a device:
+1. **Subtract your own tests.** Packet tests, drills and any service that queries authoritative
+   NS directly (ACME DNS-01) all count. The first 42 hits on the Trusted :53 block were probably
+   the author's own.
+2. **Time the hits with `last_hit`:** poll the policy every minute (read-only; `unifi-fw`'s Api
+   class), log each change of `hits`/`last_hit`.
+3. **Correlate those times with the resolver's per-client query counts** (a device whose
+   hard-coded resolver times out retries via the DHCP DNS seconds later).
+4. Only then ask for device SSH or a syslog target, which are changes to the gateway.
+`unifi-fw log <rule> on|off` exists (homelab-ansible 4030fe1) and `unifi-fw diff` reports a
+logging-only change as "not drift", but logging is rarely the answer.
 
 ## The strongest test of a policy is to turn it off
 

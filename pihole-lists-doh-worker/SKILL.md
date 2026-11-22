@@ -1,6 +1,6 @@
 ---
 name: pihole-lists-doh-worker
-description: This skill should be used when giving phones or tablets Pi-hole-style ad-blocking away from home without depending on a VPN/Tailscale tunnel. It covers serving Pi-hole's own lists as DNS-over-HTTPS from a Cloudflare Worker, iOS/iPadOS DNS-settings profiles (.mobileconfig) with SSID OnDemand rules, and the Worker's upstream (Cloudflare's security resolver over DoH since 2026-11-03; Quad9 DoT before). Built 2026-11-02 for Will (repo jackson2w/roaming-dns-worker, homelab-ansible roaming-dns.yml). Trigger phrases include "ad blocking on the go", "roaming DNS", "DoH Worker", "DNS over HTTPS cloudflare worker", "pihole lists cloudflare", "mobileconfig DNS profile", "com.apple.dnsSettings.managed", "OnDemandRules SSIDMatch", "iOS DNS profile not working", "Use Tailscale DNS settings", "Quad9 DoH 505", "HTTP Version Not Supported quad9", "cloudflare:sockets DoT", "error code 1010", "security.cloudflare-dns.com", "connect to 1.1.1.1 from worker", "Stream was cancelled", "Python-urllib 403 workers.dev", "Workers Builds name mismatch", "npm install-scripts approve workerd", "roaming-dns-canary", "roaming-dns-sync".
+description: This skill should be used when giving phones or tablets Pi-hole-style ad-blocking away from home without depending on a VPN/Tailscale tunnel. It covers serving Pi-hole's own lists as DNS-over-HTTPS from a Cloudflare Worker, iOS/iPadOS DNS-settings profiles (.mobileconfig) with SSID OnDemand rules, and the Worker's upstream (Cloudflare's security resolver over DoH since 2026-11-03; Quad9 DoT before). Built 2026-11-02 for Will (repo jackson2w/roaming-dns-worker, homelab-ansible roaming-dns.yml). Trigger phrases include "ad blocking on the go", "roaming DNS", "DoH Worker", "DNS over HTTPS cloudflare worker", "pihole lists cloudflare", "mobileconfig DNS profile", "com.apple.dnsSettings.managed", "OnDemandRules SSIDMatch", "iOS DNS profile not working", "Use Tailscale DNS settings", "Quad9 DoH 505", "HTTP Version Not Supported quad9", "cloudflare:sockets DoT", "error code 1010", "security.cloudflare-dns.com", "connect to 1.1.1.1 from worker", "Stream was cancelled", "Python-urllib 403 workers.dev", "Workers Builds name mismatch", "npm install-scripts approve workerd", "roaming-dns-canary", "roaming-dns-sync", "captive portal", "plane wifi login page", "airplane wifi not loading", "hotel wifi login with DNS profile", "URLStringProbe", "probe-ok", "PROBE_FAIL", "DNS profile off for captive network".
 ---
 
 # Pi-hole's lists as a DoH Worker (ad-blocking that survives tunnel stalls)
@@ -56,8 +56,29 @@ home Wi-Fi: profile OFF by SSID rule --> Pi-hole on the LAN as before
 ## The iOS profile
 
 `com.apple.dnsSettings.managed`, `DNSProtocol: HTTPS`, `ServerURL: <worker>/dns-query/<token>`.
-`OnDemandRules` are `[{Action: Disconnect, SSIDMatch: [home SSIDs]}, {Action: Connect}]`. Use every
-SSID that gets Pi-hole: here AMPJ5, AMPJ4712 and AMPJ-IoT.
+`OnDemandRules` are, in order:
+`[{Action: Disconnect, SSIDMatch: [home SSIDs]}, {Action: Connect, URLStringProbe: "<worker>/probe/<token>"}, {Action: Disconnect}]`.
+Use every SSID that gets Pi-hole as a home SSID: here AMPJ5, AMPJ4712 and AMPJ-IoT.
+
+**Why the probe rule (2026-11-21): a plain `{Action: Connect}` breaks captive Wi-Fi.** On a plane,
+every lookup, including the login page's own, goes to a DoH server that can't be reached before
+login, so the portal never loads. Apple's captive exemption covers only its own detection probe,
+not the portal page. The Worker logged zero lookups from both devices for the whole flight. A
+server-side "pause" can't fix this; the device itself must stop using DoH. With the probe rule:
+- iOS fetches the HTTPS probe at each network change. Before login it can't succeed (a portal
+  can't fake a 200 over TLS), so the device falls to `Disconnect` and uses the network's DNS.
+- After login the device goes back to the Worker at the next network change (Wi-Fi off/on).
+- The Worker's `/probe/<token>` answers 200 and counts `probe-ok` per device; env
+  `PROBE_FAIL="1"` makes it answer 503, which is how to test.
+- **Proven on iOS 18-era devices:** iPhone, iPad and macOS all log `probe-ok` at network changes.
+  On the iPhone, a fail run gave `probe-fail`, zero Worker lookups and doubleclick.net loading;
+  switching back restored blocking. The Apple forum report that iOS 18 ignores URLStringProbe did
+  not reproduce.
+- **Testing gotcha:** with cellular on, joining a captive Wi-Fi still passed the probe over
+  cellular, so the ground test failed where the air would work. Test with Airplane Mode + Wi-Fi.
+- Tailscale with "Use Tailscale DNS" off may or may not also block portals; that is unproven.
+- **Manual off switch:** Settings → General → VPN & Device Management → DNS → Automatic
+  (allowed because `ProhibitDisablement` is false). Shortcuts can't toggle a DNS profile.
 
 **Delivery without the token touching chat:**
 - `infisical-wrapper.sh roaming-dns-profile.sh <device>` on ansible-ctrl writes it with plistlib.
