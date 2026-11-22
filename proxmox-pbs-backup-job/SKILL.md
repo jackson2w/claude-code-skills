@@ -407,3 +407,13 @@ A DatastoreReader token gives exactly Datastore.Audit/Read/Verify, which is enou
 Expect: no dedup between plain and encrypted chunks ("Not reusing previous manifest … different chunk
 encryption mode"), so the datastore and any offsite mirror (rclone to R2/B2 of the chunk store) grow roughly
 2x until the plain snapshots prune. Check capacity first. Verify jobs and GC work without the key.
+
+## Verify jobs: `verify-job list` has no run status (2026-11-22)
+
+`proxmox-backup-manager verify-job list --output-format json` returns the job's **config only** (id,
+store, schedule, outdated-after); `last-run-state`, `last-run-endtime` and `next-run` are absent, so a
+check built on it reads "never ran" forever. Read the status from the admin API on the PBS host:
+`proxmox-backup-debug api get /admin/verify --output-format json` (same JSON plus the run fields).
+`task list --all` shows the run as worker type `verificationjob` (a manual verify is `verify`).
+Related trap: if a monthly job's results are found by grepping its log, and that log rotates weekly,
+read `.1` and `.N.gz` too, or the check goes blind three weeks in four.
