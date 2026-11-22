@@ -173,6 +173,24 @@ Two gotchas:
   startup). The CLI says as much (`Note: Changes will not take effect if n8n is running...`).
   `systemctl restart n8n` (or equivalent) is required afterward for the new node graph to
   actually take effect; verify via the startup log's `Activated workflow "<name>"` line.
+  (n8n 2.48 prints no such line: verify `active=1` + `activeVersionId` in `workflow_entity`, a
+  `webhook_entity` row for the path, and a GET on the webhook answering "not registered for GET
+  requests" — that message proves the POST registration.)
+
+**Proven pattern (2026-11-21, n8n 2.48.4, Krisp retry fields):** the service's env file is
+root-only and holds `N8N_ENCRYPTION_KEY`, so run the CLI as root via a wrapper that sources it and
+drops to the service user without putting secrets on argv:
+`set -a; . /root/.config/n8n.env; set +a; exec setpriv --reuid=n8n --regid=n8n --init-groups env HOME=/opt/n8n n8n "$@"`.
+Files you import must be readable by the service user (not under `/root`). Order: check
+`execution_entity` for running ones → `export:workflow --backup --output=dir/` → stop n8n → copy
+`database.sqlite*` → import → `update:workflow --active=true` → start. **Edit the exported LIVE
+JSON, not the repo file** (keeps ids/credentials). When diffing live vs repo, expect n8n's
+normalisation, not drift: params equal to defaults are dropped (`method: GET`,
+`responseMode: onReceived`, Telegram `resource/operation`; Wait v1.1 defaults are `amount: 5`,
+`unit: seconds`, while v1's are 1/hours), IF v2 conditions gain `options.version`, Telegram gets
+`parse_mode: Markdown` stored (force-defaulted), settings gain `binaryMode`. Read the node's
+`dist/nodes/<Node>/*.node.js` for per-version defaults before calling a missing param drift.
+`ECONNREFUSED 0.0.0.0:443` at startup = telemetry blocked by Pi-hole, harmless.
 
 ## Where secrets should and shouldn't flow
 
