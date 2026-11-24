@@ -915,3 +915,40 @@ the cleanest post-reboot check. Docker removal (`hermes-docker-remove.yml`) and 
 - Per-platform toolsets: `hermes tools disable --platform telegram computer_use image_gen tts`.
 - Cron runs refuse flagged commands outright (`approvals.cron_mode: deny`): `python -c`, `bash -c/-lc`, heredocs into interpreters, `rm -r`, `execute_code`. Running a script file (`bash ~/scratch/x.sh`, `python3 x.py`) is not flagged. Test a shape with `tools.approval_detection.detect_dangerous_command(cmd)` in the Hermes venv before writing advice.
 - Logs worth reading for a review: `~/.hermes/logs/errors.log*` (weeks), `agent.log*` (per-call `in= out= latency= cache=`, ~1 day per 5 MB file). Count, don't read content.
+
+## v0.23.1 → v0.23.3 twin rehearsal (2026-11-24): harness steps and what 0.23.3 changes
+
+**Harness (ansible-ctrl `/root/hermes-twin-rehearsal`, `play.sh` refuses any host not named hermes-twin-*):**
+`hermes-twin.sh create` → put the new IP in `play.sh` and `inventory.ini` (`hermes ansible_host=<ip>`,
+`[hermes:vars] twin=true`) and keyscan → copy the current hermes-ansible into `repo/` **and onto the twin
+at the same path** (the install playbooks run their tests with controller paths; without the copy every
+approval test fails "can't open file") → `hermes-service-user-install.yml` FIRST (bootstrap fails "no
+such user") → `hermes-twin-bootstrap.yml` (about 8 min at the current pin) → the install playbooks.
+`hermes-config-install.yml` fails on a twin at the HEY_ACCOUNT_ID and MCP-pin checks (no credentials by
+design): resume with `--start-at-task "Render the pinned values for hermes-config-drift ..."`. Skip
+`hermes-incident-install` (needs the agent-exchange cron, which adds scheduled jobs). Then
+`hermes-pm-update.yml -e hermes_pm_update=true -e twin=true -e hermes_pm_release=vX -e
+hermes_pm_release_sha=<commit>` (about 10 min). Destroy the twin after.
+
+**Model calls without LunaRoute:** a dummy OpenAI-compatible server on the twin (127.0.0.1:9911; it
+returns usage with `prompt_tokens_details.cached_tokens` and logs every request), then `hermes config set
+providers.lunaroute.base_url http://127.0.0.1:9911/v1`. `hermes chat -q` makes 2 requests (a capability
+probe and the turn). Never let a twin reach LunaRoute: Chuka's plan has ONE concurrent request.
+
+**Found:** (1) `tasks/hermes-pm-verify.yml` could not load at all: a free-form `shell: |` block is split
+as key=value args, and one apostrophe in a comment ("the gateway's") is an unbalanced quote to
+ansible-core 2.19 ("failed at splitting arguments ... unbalanced jinja2 block or quotes"). Use
+`shell: cmd: |`. A `split_args` scan of every free-form shell/command block in both repos finds
+these offline. (2) Production carried `prompt_caching.cache_ttl: 5m` untracked: now pinned.
+
+**0.23.3's prompt-cache controller** (`agent/prompt_cache_lifecycle`): per chat, (1) keep-alive re-sends
+at 5/6 of the cache TTL (30 min declared for OpenAI-spec routes), up to 3 per user message while idle,
+(2) then compacts an idle human chat (window >= 30 min, context >= half the threshold), (3) else
+offloads old tool output (no model call). Keep-alives need a positive economics decision from the price
+table; a `custom:*` provider is billing "unknown", so on Chuka it logs `prompt cache warming stopped:
+cache economics unavailable (refreshes=0, spent=$0.0000)` and nothing warms or compacts (compaction only
+follows a spent warm budget). A priced route (an Anthropic fallback) would warm: keep `cache_ttl: 5m` for
+that. The compaction ceiling is unchanged: past `context_total_ceiling_seconds` it still "continues
+without compression". The session-reset plugin arms on 0.23.3 (`session-reset-policy v0.3.0 armed`),
+`config check` shows no warnings about our pins, and 11 of our 30 disabled builtin names moved to
+`optional-skills` or were dropped (none renamed to something enabled).
