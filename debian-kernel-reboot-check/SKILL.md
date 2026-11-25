@@ -151,3 +151,14 @@ kernel that dies before that service runs keeps booting on every power cycle. Af
 `uname -r`, that `bootctl status` no longer lists a OneShot entry, and that the ESP default is unchanged.
 If the session doing this runs in a guest on that host, schedule the post-boot checks (a timed
 reminder) before rebooting.
+
+## Making a trial kernel the permanent default after a clean soak (2026-11-23)
+
+Once the one-shot-booted kernel (section above) has soaked clean for a few days, make it the real
+default with `proxmox-boot-tool kernel pin <new-kernel>` (no `--next-boot`), then
+`proxmox-boot-tool refresh`. That writes the new kernel as the default on every ESP; the old kernel
+stays listed as a fallback boot entry, and a crash or power cycle from then on boots the new one.
+Check the ESPs' `loader.conf` default, then confirm `uname -r` after the next real reboot before
+removing any interim mitigation (for example a firewall rule) that assumed the old kernel. Done on
+pve 2026-11-23: `kernel pin 7.3.5-1-pve` + refresh, both ESPs default to `proxmox-7.3.5-1-pve.conf`,
+7.0.14-29 kept as the fallback.
