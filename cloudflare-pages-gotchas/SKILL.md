@@ -150,6 +150,10 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
   else `next()`), plus `public/_routes.json` excluding static paths so only page requests invoke Functions. Previews
   (`<x>.<project>.pages.dev`) are untouched. Cloudflare's documented way is a Bulk Redirect, which our CF tokens can't
   create (no Account Rulesets / Filter Lists permission). On a `_worker.js` project, put the same check in the Worker.
+- **www -> apex without a zone Redirect Rule (j2wtalent, 2026-11-26).** Our zone token can't write Redirect Rules, and a
+  proxied placeholder record (`AAAA 100::`) waiting for one serves Cloudflare 522 meanwhile. Instead: CNAME `www` ->
+  `<project>.pages.dev` (proxied), add `www.<domain>` as a Pages custom domain (POST `.../pages/projects/<p>/domains`,
+  CF_PAGES_TOKEN; active in ~4 min), and 301 that host in the same `_middleware.js` host check. Snapshot the zone first.
 - **Watch the custom domain against the project's own pages.dev host (2026-11-19, homelab-ansible
   `scripts/wj-site-watch.py`).** Both serve the same deployment, and zone features run only on the custom domain, so
   every page fetched from both must be byte-identical: any difference is Cloudflare changing pages (Rocket Loader, Email
