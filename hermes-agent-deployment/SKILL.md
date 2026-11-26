@@ -952,3 +952,19 @@ that. The compaction ceiling is unchanged: past `context_total_ceiling_seconds` 
 without compression". The session-reset plugin arms on 0.23.3 (`session-reset-policy v0.3.0 armed`),
 `config check` shows no warnings about our pins, and 11 of our 30 disabled builtin names moved to
 `optional-skills` or were dropped (none renamed to something enabled).
+
+## Adding a native-provider fallback (Anthropic) on a PM install (2026-11-25)
+
+- **The provider SDK is a PM extra, not core.** `anthropic = ["anthropic==0.125.0"]` in pyproject; without it the
+  fallback logs `resolve_provider_client: anthropic requested but no Anthropic credentials found` / `Fallback to
+  anthropic failed: provider not configured` — which reads as a credential problem but is an ImportError. Install
+  as root with every live extra listed (`pm.cli install --extra=telegram --extra=edge-tts --extra=anthropic`; a
+  list missing telegram drops Telegram), chown what root created, restart. hermes-ansible `hermes-pm-extras.yml`.
+- **Placeholder key works in `gateway.env`** (process env): `resolve_anthropic_token` reads `ANTHROPIC_API_KEY` via
+  the secret scope, which falls through to os.environ when not multiplexing. Agent Vault swaps `x-api-key`.
+- **`hermes config set` parses list literals** (0.23.1 `_coerce_config_set_value`), but `config get` prints block
+  YAML: compare pins parsed, or every play run re-sets the value and restarts the gateway.
+- **Forced-fallback proof without touching Chuka's state:** a throwaway `HERMES_HOME` (config.yaml copy without
+  `mcp_servers`, the primary's `base_url` → `http://127.0.0.1:9/v1`, `installs` symlinked or the launcher says
+  "no dependency environment is committed") + gateway.env sourced + `hermes chat --oneshot -Q -q ...`. Under strict
+  deny the vault answers the dead URL with 403 "No broker service matching host", which also triggers fallback.
