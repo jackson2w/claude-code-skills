@@ -5,6 +5,11 @@ description: This skill should be used when turning a WordPress site into a stat
 
 # WordPress → static copy on Pages, WordPress kept as a private editor
 
+> **Its one deployment is retired (2026-11-26).** williejackson.com ran this pattern 2026-11-01 to 11-18, then the
+> 11ty rebuild replaced it. CT 144, its playbook (`wordpress-install.yml`) and the export/publish scripts were removed
+> from homelab-ansible in `e5bcb5f`; recover them from git history if the pattern is ever needed again. The
+> retirement order that worked: final PBS backup → protect it → `restore-test.sh <vmid>` → Terraform destroy.
+
 Will's website rules (`website-building-preferences` §11–13) prefer a clean WordPress → 11ty
 migration with **no headless WordPress**. This pattern is the sanctioned **interim**: it gets a
 site off a public WordPress server now, keeping the editor Will already knows, until the rebuild.

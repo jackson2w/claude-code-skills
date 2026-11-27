@@ -131,7 +131,7 @@ is unaffected. Long-lived sites still go through dashboard Git integration (webs
   working, which hid it. Zone features never run on `*.pages.dev`, so every preview check and served check passed.
   Defences, both in the site's own code so a dashboard toggle can't break it: `data-cfasync="false"` on every
   `<script src>` (Rocket Loader then skips them and injects nothing), and a deploy step that fetches the custom domain
-  and fails on `rocket-loader`, `cdn-cgi/l/email-protection` or a retyped script (mockups `scripts/wj-preview-deploy.sh`).
+  and fails on `rocket-loader`, `cdn-cgi/l/email-protection` or a retyped script (williejackson-com `scripts/wj-preview-deploy.sh`).
   **After any cutover to a custom domain: crawl the custom domain and `cmp` each page with the build, and load pages
   in a browser reading the console.** On williejackson.com that diff showed exactly three zone features: Rocket
   Loader, Email Obfuscation, Automatic HTTPS Rewrites (it rewrote the Dublin Core namespace `http://purl.org/...`).
